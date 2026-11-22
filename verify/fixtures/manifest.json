@@ -1,0 +1,52 @@
+{
+  "day1": {
+    "file": "day1.jpg",
+    "shoot": "2024-03-15",
+    "start": "2024-03-15",
+    "day": 1,
+    "source": "EXIF DateTimeOriginal"
+  },
+  "cross_month": {
+    "file": "cross_month.jpg",
+    "shoot": "2024-02-03",
+    "start": "2024-01-28",
+    "day": 7,
+    "source": "EXIF DateTimeOriginal"
+  },
+  "year_cross": {
+    "file": "year_cross.jpg",
+    "shoot": "2024-01-01",
+    "start": "2023-12-31",
+    "day": 2,
+    "source": "EXIF DateTimeOriginal"
+  },
+  "createdate_only": {
+    "file": "createdate_only.jpg",
+    "shoot": "2024-06-10",
+    "start": "2024-06-01",
+    "day": 10,
+    "source": "EXIF CreateDate"
+  },
+  "ifd0_datetime_only": {
+    "file": "ifd0_datetime_only.jpg",
+    "expect_manual": true
+  },
+  "no_exif": {
+    "file": "no_exif.jpg",
+    "expect_manual": true,
+    "manual_shoot": "2024-05-01",
+    "start": "2024-05-01",
+    "day": 1
+  },
+  "orient6": {
+    "file": "orient6.jpg",
+    "shoot": "2024-04-20",
+    "start": "2024-04-20",
+    "day": 1,
+    "expect_size": [
+      400,
+      600
+    ],
+    "top_is_red": true
+  }
+}
