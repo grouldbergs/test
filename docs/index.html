@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TinyDays</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --fg: #1a1a1a;
+      --muted: #555;
+      --line: #ddd;
+      --bg: #fafafa;
+      --err: #a40000;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0 auto;
+      max-width: 40rem;
+      padding: 1.25rem 1rem 3rem;
+      font: 16px/1.5 system-ui, -apple-system, sans-serif;
+      color: var(--fg);
+      background: #fff;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.35rem; }
+    h2 { font-size: 0.85rem; margin: 0 0 0.5rem; color: var(--muted); font-weight: 600; }
+    .lead { margin: 0 0 1.25rem; color: var(--muted); font-size: 0.95rem; }
+    label { display: block; font-weight: 600; margin: 0 0 0.35rem; }
+    .field { margin: 0 0 1rem; }
+    input[type="date"], input[type="file"] {
+      width: 100%;
+      font: inherit;
+      padding: 0.45rem 0.5rem;
+    }
+    button {
+      display: inline-block;
+      font: inherit;
+      font-weight: 600;
+      padding: 0.65rem 1rem;
+      border: 0;
+      border-radius: 8px;
+      background: #1a1a1a;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #exif-date-line, #day-line { margin: 0 0 0.75rem; }
+    #day-line { font-size: 1.4rem; font-weight: 700; }
+    #manual-wrap {
+      margin: 0 0 1rem;
+      padding: 0.75rem 0.85rem;
+      background: #fff6e5;
+      border-radius: 8px;
+    }
+    #manual-wrap p { margin: 0 0 0.6rem; }
+    #error { color: var(--err); margin: 0 0 0.75rem; }
+    #preview {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 0.5rem 0;
+      background: var(--bg);
+    }
+    #save-hint { margin: 0 0 0.6rem; color: var(--muted); font-size: 0.9rem; }
+    #debug {
+      margin-top: 2rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line);
+    }
+    #debug-body {
+      margin: 0;
+      padding: 0.75rem;
+      background: var(--bg);
+      border-radius: 8px;
+      font-size: 0.75rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    #work { display: none; }
+  </style>
+</head>
+<body>
+  <h1>TinyDays</h1>
+  <p class="lead">在手机本地给照片加上 DAY 水印，原图不会离开这台设备。</p>
+
+  <div class="field">
+    <label for="start-date">起始日</label>
+    <input type="date" id="start-date" required>
+  </div>
+
+  <div class="field">
+    <label for="photo">选择照片</label>
+    <input type="file" id="photo" accept="image/*">
+  </div>
+
+  <p id="exif-date-line" hidden>读取到的拍摄日期：<span id="exif-date"></span></p>
+
+  <div id="manual-wrap" hidden>
+    <p>没有读到拍摄日期，请手动选择。</p>
+    <label for="shoot-date-manual">拍摄日期</label>
+    <input type="date" id="shoot-date-manual">
+  </div>
+
+  <p id="error" hidden></p>
+  <p id="day-line" hidden>DAY <span id="day-number"></span></p>
+
+  <img id="preview" alt="加上水印后的照片" hidden>
+  <p id="save-hint" hidden>也可以长按图片，选择保存到相册。</p>
+  <button id="save" type="button" hidden>保存到相册</button>
+
+  <section id="debug">
+    <h2>调试信息</h2>
+    <pre id="debug-body">还没有选择照片。</pre>
+  </section>
+
+  <canvas id="work"></canvas>
+  <script src="app.js"></script>
+</body>
+</html>
