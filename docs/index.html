@@ -45,24 +45,33 @@
       cursor: pointer;
     }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
-    #exif-date-line, #day-line { margin: 0 0 0.75rem; }
-    #day-line { font-size: 1.4rem; font-weight: 700; }
-    #manual-wrap {
+    .card {
+      margin: 0 0 1.25rem;
+      padding-top: 0.9rem;
+      border-top: 1px solid var(--line);
+    }
+    .file-name { font-weight: 600; margin: 0 0 0.5rem; word-break: break-all; }
+    .exif-line { margin: 0 0 0.75rem; }
+    .day-line { font-size: 1.4rem; font-weight: 700; margin: 0 0 0.75rem; }
+    .manual {
       margin: 0 0 1rem;
       padding: 0.75rem 0.85rem;
       background: #fff6e5;
       border-radius: 8px;
     }
-    #manual-wrap p { margin: 0 0 0.6rem; }
-    #error { color: var(--err); margin: 0 0 0.75rem; }
-    #preview {
+    .manual p { margin: 0 0 0.6rem; }
+    .card-error, #error { color: var(--err); margin: 0 0 0.75rem; }
+    .pending { margin: 0 0 0.75rem; color: var(--muted); }
+    .preview {
       display: block;
       width: 100%;
       height: auto;
       margin: 0.5rem 0;
       background: var(--bg);
     }
-    #save-hint { margin: 0 0 0.6rem; color: var(--muted); font-size: 0.9rem; }
+    .save-hint, .out-name, .note { margin: 0 0 0.6rem; color: var(--muted); font-size: 0.9rem; }
+    .out-name { word-break: break-all; }
+    #share-all { margin: 0 0 0.6rem; }
     #debug {
       margin-top: 2rem;
       padding-top: 1rem;
@@ -91,24 +100,17 @@
   </div>
 
   <div class="field">
-    <label for="photo">选择照片</label>
-    <input type="file" id="photo" accept="image/*">
-  </div>
-
-  <p id="exif-date-line" hidden>读取到的拍摄日期：<span id="exif-date"></span></p>
-
-  <div id="manual-wrap" hidden>
-    <p>没有读到拍摄日期，请手动选择。</p>
-    <label for="shoot-date-manual">拍摄日期</label>
-    <input type="date" id="shoot-date-manual">
+    <label for="photo">选择照片（最多 4 张）</label>
+    <input type="file" id="photo" accept="image/*" multiple>
   </div>
 
   <p id="error" hidden></p>
-  <p id="day-line" hidden>DAY <span id="day-number"></span></p>
+  <div id="cards"></div>
 
-  <img id="preview" alt="加上水印后的照片" hidden>
-  <p id="save-hint" hidden>也可以长按图片，选择保存到相册。</p>
-  <button id="save" type="button" hidden>保存到相册</button>
+  <p id="share-note" class="note" hidden>只会打开系统分享，不会自动写入相册。</p>
+  <p id="share-incomplete" class="note" hidden>还有照片没完成，这次分享不包括它们。</p>
+  <button id="share-all" type="button" hidden>分享全部</button>
+  <p id="share-fallback" class="note" hidden>这个浏览器不能一次分享多张。请逐张点「保存这张」，或长按图片。</p>
 
   <section id="debug">
     <h2>调试信息</h2>
