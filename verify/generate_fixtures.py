@@ -128,5 +128,18 @@ def main() -> None:
     print("manifest written")
 
 
+def write_limit20() -> None:
+    """Twenty small JPEGs: d01–d19 dated 2024-01-01..19, d20 with no EXIF."""
+    dest = OUT / "limit20"
+    dest.mkdir(parents=True, exist_ok=True)
+    for i in range(1, 20):
+        img = dark_base(400, 300, (16, 24 + i, 64))
+        exif = attach_exif(img, orientation=1, dt_original=f"2024:01:{i:02d} 12:00:00")
+        save(f"limit20/d{i:02d}.jpg", img, exif)
+    plain = dark_base(400, 300, (32, 32, 36))
+    save("limit20/d20.jpg", plain, None)
+
+
 if __name__ == "__main__":
     main()
+    write_limit20()

@@ -1,8 +1,8 @@
-/* TinyDays: stamp DAY on up to 4 photos locally. Never upload. */
+/* TinyDays: stamp DAY on up to 20 photos locally. Never upload. */
 (function () {
   "use strict";
 
-  var MAX = 4;
+  var MAX = 20;
   var START_KEY = "tinydays-start-date";
   var TAG_ORIENTATION = 0x0112;
   var TAG_DATETIME = 0x0132;
@@ -12,6 +12,8 @@
 
   var startInput = document.getElementById("start-date");
   var photoInput = document.getElementById("photo");
+  var photoLabel = document.getElementById("photo-label");
+  photoLabel.textContent = "选择照片（最多 " + MAX + " 张）";
   var errorEl = document.getElementById("error");
   var cardsEl = document.getElementById("cards");
   var shareNote = document.getElementById("share-note");
@@ -45,7 +47,7 @@
     shareFallback.hidden = true;
     hideError();
     if (files.length > MAX) {
-      showError("一次最多 4 张。你这次选了 " + files.length + " 张，这些照片都没有处理，请重新选择。");
+      showError("一次最多 " + MAX + " 张。你这次选了 " + files.length + " 张，这些照片都没有处理，请重新选择。");
       photoInput.value = "";
       updateShare();
       updateDebug();
