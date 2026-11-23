@@ -1,7 +1,8 @@
-/* TinyDays web MVP: read a photo locally, stamp DAY N, never upload. */
+/* TinyDays: stamp DAY on up to 4 photos locally. Never upload. */
 (function () {
   "use strict";
 
+  var MAX = 4;
   var START_KEY = "tinydays-start-date";
   var TAG_ORIENTATION = 0x0112;
   var TAG_DATETIME = 0x0132;
@@ -11,144 +12,314 @@
 
   var startInput = document.getElementById("start-date");
   var photoInput = document.getElementById("photo");
-  var exifDateLine = document.getElementById("exif-date-line");
-  var exifDateEl = document.getElementById("exif-date");
-  var manualWrap = document.getElementById("manual-wrap");
-  var manualInput = document.getElementById("shoot-date-manual");
   var errorEl = document.getElementById("error");
-  var dayLine = document.getElementById("day-line");
-  var dayNumberEl = document.getElementById("day-number");
-  var preview = document.getElementById("preview");
-  var saveHint = document.getElementById("save-hint");
-  var saveBtn = document.getElementById("save");
+  var cardsEl = document.getElementById("cards");
+  var shareNote = document.getElementById("share-note");
+  var shareIncomplete = document.getElementById("share-incomplete");
+  var shareAllBtn = document.getElementById("share-all");
+  var shareFallback = document.getElementById("share-fallback");
   var debugBody = document.getElementById("debug-body");
   var canvas = document.getElementById("work");
   var ctx = canvas.getContext("2d");
 
-  var state = {
-    file: null,
-    fileBuffer: null,
-    exif: null,
-    dateSource: null, // "EXIF DateTimeOriginal" | "EXIF CreateDate" | "manual"
-    shoot: null,
-    day: null,
-    outBlob: null,
-    outUrl: null,
-    decodeNote: "",
-  };
+  var items = [];
+  var selection = 0;
+  var job = 0;
+  var chain = Promise.resolve();
 
   startInput.value = localStorage.getItem(START_KEY) || "";
-  startInput.addEventListener("change", function () {
-    localStorage.setItem(START_KEY, startInput.value || "");
-    if (state.file) render();
-  });
+  startInput.addEventListener("change", onStartChange);
   photoInput.addEventListener("change", onPhotoPicked);
-  manualInput.addEventListener("change", function () {
-    if (state.file && state.dateSource === "manual") render();
-  });
-  saveBtn.addEventListener("click", onSave);
+  shareAllBtn.addEventListener("click", onShareAll);
 
   function onPhotoPicked() {
-    var file = photoInput.files && photoInput.files[0];
-    resetOutput();
-    state.file = file || null;
-    state.fileBuffer = null;
-    state.exif = null;
-    state.dateSource = null;
-    state.shoot = null;
-    state.decodeNote = "";
-    if (!file) {
-      debugBody.textContent = "还没有选择照片。";
+    var files = photoInput.files ? Array.prototype.slice.call(photoInput.files) : [];
+    if (!files.length) return;
+    job += 1;
+    var myJob = job;
+    selection += 1;
+    var sel = selection;
+    items.forEach(clearOutput);
+    items = [];
+    cardsEl.textContent = "";
+    shareFallback.hidden = true;
+    hideError();
+    if (files.length > MAX) {
+      showError("一次最多 4 张。你这次选了 " + files.length + " 张，这些照片都没有处理，请重新选择。");
+      photoInput.value = "";
+      updateShare();
+      updateDebug();
       return;
     }
-    file.arrayBuffer().then(function (buf) {
-      if (state.file !== file) return;
-      state.fileBuffer = buf;
-      state.exif = readExif(buf);
-      var shoot = dateFromExif(state.exif);
-      if (shoot) {
-        state.dateSource = shoot.source;
-        state.shoot = shoot.date;
-        manualWrap.hidden = true;
-        manualInput.value = "";
-        exifDateEl.textContent = shoot.date.iso;
-        exifDateLine.hidden = false;
-      } else {
-        state.dateSource = "manual";
-        state.shoot = null;
-        exifDateLine.hidden = true;
-        manualInput.value = "";
-        manualWrap.hidden = false;
-      }
-      render();
-    }).catch(function (err) {
-      showError("读取文件失败：" + (err && err.message ? err.message : err));
-      updateDebug();
+    items = files.map(function (file) {
+      return {
+        sel: sel,
+        file: file,
+        exif: null,
+        exifReady: false,
+        readError: "",
+        dateSource: null,
+        shoot: null,
+        day: null,
+        outBlob: null,
+        outUrl: "",
+        outName: "",
+        error: "",
+        decodeNote: "",
+        pending: true,
+        el: null,
+      };
     });
+    renderCards();
+    updateShare();
+    updateDebug();
+    enqueue(function () { return runJob(myJob); });
   }
 
-  function render() {
-    hideError();
-    var start = parseIsoDate(startInput.value);
-    if (!state.file) return;
-    if (!start) {
-      showError("请先填写起始日。");
-      dayLine.hidden = true;
-      hidePreview();
+  function onStartChange() {
+    localStorage.setItem(START_KEY, startInput.value || "");
+    if (!items.length) {
       updateDebug();
       return;
     }
-    if (state.dateSource === "manual") {
-      state.shoot = parseIsoDate(manualInput.value);
-      if (!state.shoot) {
-        dayLine.hidden = true;
-        hidePreview();
+    job += 1;
+    var myJob = job;
+    shareFallback.hidden = true;
+    items.forEach(function (item) {
+      clearOutput(item);
+      item.pending = true;
+      if (!item.readError) item.error = "";
+      updateCard(item);
+    });
+    updateShare();
+    updateDebug();
+    enqueue(function () { return runJob(myJob); });
+  }
+
+  function onManualChange(item) {
+    if (!item || item.dateSource !== "manual" || item.sel !== selection) return;
+    job += 1;
+    var myJob = job;
+    shareFallback.hidden = true;
+    clearOutput(item);
+    item.pending = true;
+    item.error = "";
+    updateCard(item);
+    updateShare();
+    enqueue(function () { return runJob(myJob); });
+  }
+
+  function enqueue(fn) {
+    var next = chain.then(fn, fn);
+    chain = next.then(function () {}, function () {});
+    return next;
+  }
+
+  function runJob(myJob) {
+    var index = 0;
+    function next() {
+      if (myJob !== job) return Promise.resolve();
+      if (index >= items.length) {
+        updateShare();
         updateDebug();
+        return Promise.resolve();
+      }
+      var item = items[index++];
+      return ensure(item, myJob).then(next, next);
+    }
+    return next();
+  }
+
+  function ensure(item, myJob) {
+    if (myJob !== job || item.sel !== selection) return Promise.resolve();
+    var prep = item.exifReady ? Promise.resolve() : readOne(item);
+    return prep.then(function () {
+      if (myJob !== job || item.sel !== selection) return;
+      if (item.readError) {
+        item.pending = false;
+        item.error = item.readError;
+        clearOutput(item);
+        updateCard(item);
+        updateShare();
         return;
       }
-    }
-    if (!state.shoot) {
-      updateDebug();
-      return;
-    }
-    state.day = calendarDays(state.shoot, start) + 1;
-    dayNumberEl.textContent = String(state.day);
-    dayLine.hidden = false;
-    stampPhoto(state.file).then(function (blob) {
-      state.outBlob = blob;
-      if (state.outUrl) URL.revokeObjectURL(state.outUrl);
-      state.outUrl = URL.createObjectURL(blob);
-      preview.src = state.outUrl;
-      preview.hidden = false;
-      saveHint.hidden = false;
-      saveBtn.hidden = false;
+      var start = parseIsoDate(startInput.value);
+      if (!start) {
+        item.pending = false;
+        clearOutput(item);
+        showError("请先填写起始日。");
+        updateCard(item);
+        updateShare();
+        return;
+      }
+      hideError();
+      if (item.dateSource === "manual") {
+        var manualInput = item.el && item.el.querySelector(".manual-date");
+        item.shoot = parseIsoDate(manualInput && manualInput.value);
+      }
+      if (!item.shoot) {
+        item.pending = false;
+        clearOutput(item);
+        updateCard(item);
+        updateShare();
+        return;
+      }
+      var day = calendarDays(item.shoot, start) + 1;
+      if (item.outBlob && item.day === day && !item.error) {
+        item.pending = false;
+        updateCard(item);
+        updateShare();
+        return;
+      }
+      clearOutput(item);
+      item.pending = true;
+      item.error = "";
+      updateCard(item);
+      return doStamp(item, day, myJob);
+    });
+  }
+
+  function readOne(item) {
+    return item.file.arrayBuffer().then(function (buf) {
+      if (item.sel !== selection) return;
+      try {
+        item.exif = readExif(buf);
+      } catch (err) {
+        item.readError = "读取文件失败：" + messageOf(err);
+      }
+      buf = null;
+      item.exifReady = true;
+      if (!item.readError) {
+        var shoot = dateFromExif(item.exif);
+        if (shoot) {
+          item.dateSource = shoot.source;
+          item.shoot = shoot.date;
+        } else {
+          item.dateSource = "manual";
+          item.shoot = null;
+        }
+      }
+      updateCard(item);
       updateDebug();
     }).catch(function (err) {
-      showError("处理照片失败：" + (err && err.message ? err.message : err));
-      hidePreview();
+      if (item.sel !== selection) return;
+      item.exifReady = true;
+      item.readError = "读取文件失败：" + messageOf(err);
+      updateCard(item);
       updateDebug();
     });
   }
 
-  function resetOutput() {
-    state.day = null;
-    state.outBlob = null;
-    if (state.outUrl) {
-      URL.revokeObjectURL(state.outUrl);
-      state.outUrl = null;
-    }
-    dayLine.hidden = true;
-    exifDateLine.hidden = true;
-    manualWrap.hidden = true;
-    hidePreview();
-    hideError();
+  function renderCards() {
+    cardsEl.textContent = "";
+    items.forEach(function (item, index) {
+      var art = document.createElement("article");
+      art.className = "card";
+      var manualId = "manual-" + item.sel + "-" + index;
+      art.innerHTML =
+        '<p class="file-name"></p>' +
+        '<p class="exif-line" hidden></p>' +
+        '<div class="manual" hidden>' +
+          '<p>没有读到拍摄日期，请手动选择。</p>' +
+          '<label for="' + manualId + '">拍摄日期</label>' +
+          '<input class="manual-date" id="' + manualId + '" type="date">' +
+        "</div>" +
+        '<p class="card-error" hidden></p>' +
+        '<p class="pending" hidden></p>' +
+        '<p class="day-line" hidden>DAY <span class="day-number"></span></p>' +
+        '<img class="preview" alt="加上水印后的照片" hidden>' +
+        '<p class="out-name" hidden></p>' +
+        '<p class="save-hint" hidden>也可以长按图片，选择保存到相册。</p>' +
+        '<button class="save-one" type="button" hidden>保存这张</button>';
+      art.querySelector(".manual-date").addEventListener("change", function () {
+        onManualChange(item);
+      });
+      art.querySelector(".save-one").addEventListener("click", function () {
+        saveOne(item);
+      });
+      item.el = art;
+      cardsEl.appendChild(art);
+      updateCard(item);
+    });
   }
 
-  function hidePreview() {
-    preview.hidden = true;
-    preview.removeAttribute("src");
-    saveHint.hidden = true;
-    saveBtn.hidden = true;
+  function updateCard(item) {
+    var el = item.el;
+    if (!el) return;
+    el.querySelector(".file-name").textContent = item.file.name || "（无文件名）";
+    var exifLine = el.querySelector(".exif-line");
+    var manual = el.querySelector(".manual");
+    var err = el.querySelector(".card-error");
+    var pending = el.querySelector(".pending");
+    var dayLine = el.querySelector(".day-line");
+    var dayNum = el.querySelector(".day-number");
+    var preview = el.querySelector(".preview");
+    var outName = el.querySelector(".out-name");
+    var hint = el.querySelector(".save-hint");
+    var saveBtn = el.querySelector(".save-one");
+
+    var showManual = item.exifReady && item.dateSource === "manual" && !item.readError;
+    manual.hidden = !showManual;
+    if (item.shoot && item.dateSource && item.dateSource !== "manual") {
+      exifLine.hidden = false;
+      exifLine.textContent = "读取到的拍摄日期：" + item.shoot.iso;
+    } else {
+      exifLine.hidden = true;
+      exifLine.textContent = "";
+    }
+    err.hidden = !item.error;
+    err.textContent = item.error || "";
+    var showResult = !!(item.outUrl && item.day != null && !item.error);
+    dayLine.hidden = !showResult;
+    if (showResult) dayNum.textContent = String(item.day);
+    pending.hidden = !item.pending;
+    pending.textContent = item.exifReady ? "处理中…" : "读取中…";
+    if (showResult) {
+      if (preview.getAttribute("src") !== item.outUrl) preview.src = item.outUrl;
+      preview.alt = "加上水印后的照片：" + (item.file.name || "");
+      preview.hidden = false;
+      outName.hidden = false;
+      outName.textContent = "保存文件名：" + item.outName;
+    } else {
+      preview.hidden = true;
+      preview.removeAttribute("src");
+      outName.hidden = true;
+      outName.textContent = "";
+    }
+    hint.hidden = !showResult;
+    saveBtn.hidden = !showResult;
+  }
+
+  function updateShare() {
+    var ready = items.filter(isReady);
+    var show = items.length >= 2 && ready.length >= 1;
+    shareAllBtn.hidden = !show;
+    shareNote.hidden = !show;
+    if (!show) {
+      shareIncomplete.hidden = true;
+      return;
+    }
+    if (ready.length === items.length) {
+      shareAllBtn.textContent = "分享全部（" + ready.length + " 张）";
+      shareIncomplete.hidden = true;
+    } else {
+      shareAllBtn.textContent = "分享已完成的 " + ready.length + " 张";
+      shareIncomplete.hidden = false;
+    }
+  }
+
+  function isReady(item) {
+    return !!(item.outBlob && item.outName && item.day != null && !item.error);
+  }
+
+  function clearOutput(item) {
+    item.day = null;
+    item.outBlob = null;
+    item.outName = "";
+    if (item.outUrl) {
+      URL.revokeObjectURL(item.outUrl);
+      item.outUrl = "";
+    }
   }
 
   function showError(msg) {
@@ -161,27 +332,36 @@
     errorEl.textContent = "";
   }
 
+  function messageOf(err) {
+    return err && err.message ? err.message : String(err);
+  }
+
   function updateDebug() {
-    var file = state.file;
-    var exif = state.exif || {};
     var lines = [];
     lines.push("浏览器：" + navigator.userAgent);
-    if (file) {
+    lines.push("起始日：" + (startInput.value || "（未填）"));
+    lines.push("照片数：" + items.length);
+    if (!items.length) {
+      lines.push(errorEl.hidden ? "还没有选择照片。" : errorEl.textContent);
+    }
+    items.forEach(function (item, index) {
+      var file = item.file;
+      var exif = item.exif || {};
+      lines.push("");
+      lines.push("—" + (index + 1) + "—");
       lines.push("文件：" + (file.name || "（无文件名）"));
       lines.push("类型：" + (file.type || "（未知）") + "，大小：" + formatSize(file.size));
-      var lm = formatLastModified(file);
-      lines.push("文件修改时间：" + lm + "（仅供参考，未用作拍摄日期）");
-    } else {
-      lines.push("文件：（未选择）");
-    }
-    lines.push("EXIF DateTimeOriginal：" + (exif.dateTimeOriginal || "（无）"));
-    lines.push("EXIF CreateDate：" + (exif.createDate || "（无）"));
-    lines.push("EXIF 方位：" + (exif.orientation != null ? String(exif.orientation) : "（无）"));
-    lines.push("拍摄日期来源：" + (state.dateSource || "（无）"));
-    lines.push("起始日：" + (startInput.value || "（未填）"));
-    lines.push("拍摄日期：" + (state.shoot ? state.shoot.iso : "（无）"));
-    lines.push("DAY：" + (state.day != null ? String(state.day) : "（未计算）"));
-    if (state.decodeNote) lines.push("解码：" + state.decodeNote);
+      lines.push("文件修改时间：" + formatLastModified(file) + "（仅供参考，未用作拍摄日期）");
+      lines.push("EXIF DateTimeOriginal：" + (exif.dateTimeOriginal || "（无）"));
+      lines.push("EXIF CreateDate：" + (exif.createDate || "（无）"));
+      lines.push("EXIF 方位：" + (exif.orientation != null ? String(exif.orientation) : "（无）"));
+      lines.push("拍摄日期来源：" + (item.dateSource || "（无）"));
+      lines.push("拍摄日期：" + (item.shoot ? item.shoot.iso : "（无）"));
+      lines.push("DAY：" + (item.day != null ? String(item.day) : "（未计算）"));
+      if (item.outName) lines.push("保存文件名：" + item.outName);
+      if (item.decodeNote) lines.push("解码：" + item.decodeNote);
+      if (item.error) lines.push("错误：" + item.error);
+    });
     debugBody.textContent = lines.join("\n");
   }
 
@@ -356,23 +536,31 @@
     return entries;
   }
 
-  /* ---- image + watermark ---- */
+  /* ---- image + watermark, one photo at a time ---- */
 
-  function stampPhoto(file) {
-    return loadOrientedImage(file).then(function (img) {
+  function doStamp(item, day, myJob) {
+    return loadOrientedImage(item).then(function (img) {
+      if (myJob !== job || item.sel !== selection) {
+        closeImg(img);
+        releaseCanvas();
+        return null;
+      }
       var w = img.width || img.naturalWidth;
       var h = img.height || img.naturalHeight;
-      if (!w || !h) throw new Error("无法读取图片尺寸");
+      if (!w || !h) {
+        closeImg(img);
+        throw new Error("无法读取图片尺寸");
+      }
       canvas.width = w;
       canvas.height = h;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
-      if (typeof img.close === "function") img.close();
+      closeImg(img);
 
-      var text = "DAY " + state.day;
+      var text = "DAY " + day;
       var fontSize = Math.max(28, Math.round(w * 0.055));
-      var pad = Math.round(fontSize * 0.7);
+      var padPx = Math.round(fontSize * 0.7);
       ctx.save();
       ctx.font = "bold " + fontSize + "px system-ui, -apple-system, sans-serif";
       ctx.textAlign = "right";
@@ -382,42 +570,102 @@
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = Math.round(fontSize * 0.06);
       ctx.fillStyle = "#ffffff";
-      ctx.fillText(text, w - pad, h - pad);
+      ctx.fillText(text, w - padPx, h - padPx);
       ctx.restore();
 
       return new Promise(function (resolve, reject) {
         canvas.toBlob(function (blob) {
+          releaseCanvas();
           if (blob) resolve(blob);
           else reject(new Error("无法导出图片"));
         }, "image/jpeg", 0.92);
       });
+    }).then(function (blob) {
+      if (!blob) return;
+      if (myJob !== job || item.sel !== selection) return;
+      item.day = day;
+      item.outBlob = blob;
+      item.outName = uniqueName(item);
+      item.outUrl = URL.createObjectURL(blob);
+      item.pending = false;
+      item.error = "";
+      updateCard(item);
+      updateShare();
+      updateDebug();
+    }).catch(function (err) {
+      releaseCanvas();
+      if (myJob !== job || item.sel !== selection) return;
+      item.pending = false;
+      item.error = "处理照片失败：" + messageOf(err);
+      clearOutput(item);
+      updateCard(item);
+      updateShare();
+      updateDebug();
     });
   }
 
-  function loadOrientedImage(file) {
+  function uniqueName(item) {
+    var base = stripExt(item.file.name || "photo");
+    var used = {};
+    items.forEach(function (other) {
+      if (other !== item && other.outName) used[other.outName] = true;
+    });
+    var name = "DAY-" + item.day + "-" + base + ".jpg";
+    var n = 2;
+    while (used[name]) {
+      name = "DAY-" + item.day + "-" + base + "-" + n + ".jpg";
+      n += 1;
+    }
+    return name;
+  }
+
+  function stripExt(name) {
+    var base = String(name || "photo").split(/[/\\]/).pop();
+    var dot = base.lastIndexOf(".");
+    if (dot > 0) base = base.slice(0, dot);
+    base = base.replace(/[^\w.\-\u0080-\uFFFF]+/g, "_");
+    if (!base) base = "photo";
+    if (base.length > 48) base = base.slice(0, 48);
+    return base;
+  }
+
+  function closeImg(img) {
+    if (img && typeof img.close === "function") {
+      try { img.close(); } catch (e) {}
+    }
+  }
+
+  function releaseCanvas() {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+
+  function loadOrientedImage(item) {
+    var file = item.file;
     if (typeof createImageBitmap === "function") {
       return createImageBitmap(file, { imageOrientation: "from-image" }).then(function (bmp) {
-        state.decodeNote = "createImageBitmap(from-image) " + bmp.width + "x" + bmp.height;
+        item.decodeNote = "createImageBitmap(from-image) " + bmp.width + "x" + bmp.height;
         return bmp;
       }).catch(function () {
         return createImageBitmap(file).then(function (bmp) {
-          state.decodeNote = "createImageBitmap() " + bmp.width + "x" + bmp.height;
+          item.decodeNote = "createImageBitmap() " + bmp.width + "x" + bmp.height;
           return bmp;
         });
       }).catch(function () {
-        return loadViaImg(file);
+        return loadViaImg(item);
       });
     }
-    return loadViaImg(file);
+    return loadViaImg(item);
   }
 
-  function loadViaImg(file) {
+  function loadViaImg(item) {
+    var file = item.file;
     return new Promise(function (resolve, reject) {
       var url = URL.createObjectURL(file);
       var img = new Image();
       img.onload = function () {
         URL.revokeObjectURL(url);
-        state.decodeNote = "<img> " + img.naturalWidth + "x" + img.naturalHeight;
+        item.decodeNote = "<img> " + img.naturalWidth + "x" + img.naturalHeight;
         resolve(img);
       };
       img.onerror = function () {
@@ -428,10 +676,9 @@
     });
   }
 
-  function onSave() {
-    if (!state.outBlob || state.day == null) return;
-    var name = "DAY-" + state.day + ".jpg";
-    var outFile = new File([state.outBlob], name, { type: "image/jpeg" });
+  function saveOne(item) {
+    if (!isReady(item)) return;
+    var outFile = new File([item.outBlob], item.outName, { type: "image/jpeg" });
     var canShare = false;
     try {
       canShare = !!(navigator.canShare && navigator.canShare({ files: [outFile] }));
@@ -439,13 +686,36 @@
       canShare = false;
     }
     if (canShare && navigator.share) {
-      navigator.share({ files: [outFile], title: "DAY " + state.day }).catch(function (err) {
+      navigator.share({ files: [outFile], title: "DAY " + item.day }).catch(function (err) {
         if (err && err.name === "AbortError") return;
         downloadFile(outFile);
       });
       return;
     }
     downloadFile(outFile);
+  }
+
+  function onShareAll() {
+    shareFallback.hidden = true;
+    var ready = items.filter(isReady);
+    if (!ready.length) return;
+    var files = ready.map(function (item) {
+      return new File([item.outBlob], item.outName, { type: "image/jpeg" });
+    });
+    var canShare = false;
+    try {
+      canShare = !!(navigator.canShare && navigator.canShare({ files: files }));
+    } catch (e) {
+      canShare = false;
+    }
+    if (canShare && navigator.share) {
+      navigator.share({ files: files }).catch(function (err) {
+        if (err && err.name === "AbortError") return;
+        shareFallback.hidden = false;
+      });
+      return;
+    }
+    shareFallback.hidden = false;
   }
 
   function downloadFile(file) {

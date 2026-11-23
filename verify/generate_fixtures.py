@@ -103,6 +103,11 @@ def main() -> None:
         img, orientation=1, dt_original="2024:04:20 15:00:00",
     ))
 
+    # Not a JPEG. Decode must fail per file without discarding the rest.
+    bad = OUT / "not_image.jpg"
+    bad.write_bytes(b"this is not a jpeg\n")
+    print(f"wrote {bad} ({bad.stat().st_size} bytes)")
+
     manifest = {
         "day1": {"file": "day1.jpg", "shoot": "2024-03-15", "start": "2024-03-15", "day": 1,
                  "source": "EXIF DateTimeOriginal"},
@@ -117,6 +122,7 @@ def main() -> None:
                     "start": "2024-05-01", "day": 1},
         "orient6": {"file": "orient6.jpg", "shoot": "2024-04-20", "start": "2024-04-20", "day": 1,
                     "expect_size": [400, 600], "top_is_red": True},
+        "not_image": {"file": "not_image.jpg", "expect_decode_error": True},
     }
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print("manifest written")

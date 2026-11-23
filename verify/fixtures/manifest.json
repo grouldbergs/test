@@ -48,5 +48,9 @@
       600
     ],
     "top_is_red": true
+  },
+  "not_image": {
+    "file": "not_image.jpg",
+    "expect_decode_error": true
   }
 }
