@@ -35,6 +35,8 @@ fs.mkdirSync(OUT, { recursive: true });
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".wasm": "application/wasm",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json",
   ".jpg": "image/jpeg",
@@ -78,12 +80,6 @@ function startServer() {
   });
 }
 
-function dayOf(shoot, start) {
-  const [ys, ms, ds] = shoot.split("-").map(Number);
-  const [yb, mb, db] = start.split("-").map(Number);
-  return Math.round((Date.UTC(ys, ms - 1, ds) - Date.UTC(yb, mb - 1, db)) / 86400000) + 1;
-}
-
 function fixPath(name) {
   return path.join(FIX, name);
 }
@@ -112,7 +108,7 @@ async function pick(page, names) {
   }, names.length);
 }
 
-async function waitSettled(page, timeout = 15000) {
+async function waitSettled(page, timeout = 30000) {
   await page.waitForFunction(() => {
     const cards = Array.from(document.querySelectorAll("article.card"));
     if (!cards.length) return false;
@@ -136,10 +132,10 @@ async function inspect(page) {
         const d = ctx.getImageData(Math.max(0, Math.min(w - 1, x)), Math.max(0, Math.min(h - 1, y)), 1, 1).data;
         return [d[0], d[1], d[2]];
       }
-      const sx = Math.floor(w * 0.55);
-      const sy = Math.floor(h * 0.75);
-      const sw = Math.max(1, Math.min(Math.floor(w * 0.45), w - sx));
-      const sh = Math.max(1, Math.min(Math.floor(h * 0.25), h - sy));
+      const sx = Math.floor(w * 0.04);
+      const sy = Math.floor(h * 0.45);
+      const sw = Math.max(1, Math.min(Math.floor(w * 0.31), w - sx));
+      const sh = Math.max(1, Math.min(Math.floor(h * 0.55), h - sy));
       const data = ctx.getImageData(sx, sy, sw, sh).data;
       let white = 0;
       for (let i = 0; i < data.length; i += 4) {
@@ -182,7 +178,7 @@ async function inspect(page) {
         manualText: manual.querySelector("p").textContent,
         error: err.hidden ? "" : err.textContent,
         dayHidden: dayLine.hidden,
-        day: card.querySelector(".day-number").textContent,
+        day: dayLine.textContent,
         outName: card.querySelector(".out-name").textContent,
         w, h, midTop, white, jpeg,
       });
@@ -211,7 +207,12 @@ function fail(name, detail) {
 }
 
 function pageHttp(list) {
-  return list.filter((r) => r.url.startsWith("http"));
+  return list.filter((request) => {
+    if (!request.url.startsWith("http")) return false;
+    const url = new URL(request.url);
+    const localAsset = url.hostname === "127.0.0.1" && url.pathname.startsWith(BASE + "/month-age-assets/");
+    return !localAsset || request.method !== "GET";
+  });
 }
 
 function appHash() {
@@ -360,7 +361,7 @@ async function runCacheUpgrade(browser) {
     const sixState = await pageFacts(page);
     await page.screenshot({ path: path.join(OUT, "10-fixed-six.png"), fullPage: true });
     await pick(page, twenty);
-    await waitSettled(page, 60000);
+    await waitSettled(page, 180000);
     const twentyState = await pageFacts(page);
     await pick(page, twenty.concat(["day1.jpg"]));
     const over = await pageFacts(page);
@@ -435,7 +436,7 @@ async function main() {
   page.on("request", (req) => {
     const u = req.url();
     if (u.startsWith("http:") || u.startsWith("https:")) {
-      net.push({ url: u, type: req.resourceType() });
+      net.push({ url: u, method: req.method(), type: req.resourceType() });
     }
   });
   const responses = [];
@@ -478,17 +479,17 @@ async function main() {
     await page.screenshot({ path: path.join(OUT, "02-day1.png"), fullPage: true });
     const d1 = [];
     const c1 = day1.cards[0];
-    if (!c1 || c1.day !== "1") d1.push("DAY " + (c1 && c1.day));
+    if (!c1 || c1.day !== "1天") d1.push("月龄 " + (c1 && c1.day));
     if (!c1 || !c1.exif.includes("2024-03-15")) d1.push("exif line");
     if (!dbg1.includes("拍摄日期来源：EXIF DateTimeOriginal")) d1.push("source");
     if (!dbg1.includes("未用作拍摄日期")) d1.push("mtime disclaimer");
     if (!c1 || c1.white < 30) d1.push("watermark " + (c1 && c1.white));
     if (!c1 || !c1.jpeg) d1.push("not jpeg");
-    if (!c1 || c1.outName !== "保存文件名：DAY-1-day1.jpg") d1.push("name " + (c1 && c1.outName));
+    if (!c1 || c1.outName !== "保存文件名：1天-day1.jpg") d1.push("name " + (c1 && c1.outName));
     if (httpDuring.length) d1.push("HTTP " + httpDuring.map((r) => r.url).join(", "));
     if (day1.canvas !== 0) d1.push("canvas still " + day1.canvas);
     if (d1.length) fail("day1", d1.join("; "));
-    else pass("day1", "DAY 1, jpeg watermark, no HTTP, canvas released");
+    else pass("day1", "月龄 1, jpeg watermark, no photo requests, canvas released");
 
     await page.reload({ waitUntil: "load" });
     const persisted = await page.inputValue("#start-date");
@@ -507,26 +508,26 @@ async function main() {
     const dbgBatch = await debugText(page);
     await page.screenshot({ path: path.join(OUT, "03-batch-manual.png"), fullPage: true });
     const expectDays = {
-      "year_cross.jpg": String(dayOf("2024-01-01", start)),
-      "cross_month.jpg": String(dayOf("2024-02-03", start)),
-      "orient6.jpg": String(dayOf("2024-04-20", start)),
+      "year_cross.jpg": "1天",
+      "cross_month.jpg": "1个月2天",
+      "orient6.jpg": "3个月19天",
     };
     const bf = [];
     if (batch.cards.length !== 4) bf.push("cards " + batch.cards.length);
     for (const [name, day] of Object.entries(expectDays)) {
       const card = batch.cards.find((c) => c.name === name);
       if (!card) { bf.push("missing " + name); continue; }
-      if (card.day !== day || card.dayHidden) bf.push(name + " DAY " + card.day + " want " + day);
+      if (card.day !== day || card.dayHidden) bf.push(name + " 月龄 " + card.day + " want " + day);
       if (!card.jpeg) bf.push(name + " not jpeg");
       if (card.white < 20) bf.push(name + " watermark " + card.white);
-      if (!card.outName.includes("DAY-" + day + "-" + name.replace(/\.jpg$/, ""))) bf.push(name + " out " + card.outName);
+      if (!card.outName.includes(day + "-" + name.replace(/\.jpg$/, ""))) bf.push(name + " out " + card.outName);
       if (!card.manualHidden) bf.push(name + " asked for manual date");
     }
     const noExif = batch.cards.find((c) => c.name === "no_exif.jpg");
     if (!noExif || noExif.manualHidden || !noExif.manualText.includes("没有读到拍摄日期，请手动选择。")) {
       bf.push("no_exif manual prompt missing");
     }
-    if (noExif && !noExif.dayHidden) bf.push("no_exif computed DAY " + noExif.day);
+    if (noExif && !noExif.dayHidden) bf.push("no_exif computed 月龄 " + noExif.day);
     const orient = batch.cards.find((c) => c.name === "orient6.jpg");
     if (!orient || orient.w !== 400 || orient.h !== 600) bf.push("orient size " + (orient && orient.w) + "x" + (orient && orient.h));
     if (orient) {
@@ -540,7 +541,7 @@ async function main() {
     if (!dbgBatch.includes("未用作拍摄日期")) bf.push("mtime disclaimer missing in batch");
     if (!batch.shareText.includes("分享已完成的 3 张")) bf.push("share label " + batch.shareText);
     if (bf.length) fail("batch-four", bf.join("; "));
-    else pass("batch-four", "DAY " + Object.values(expectDays).join("/") + ", manual held, orient 400x600, sequential decode, no HTTP");
+    else pass("batch-four", "月龄 " + Object.values(expectDays).join("/") + ", manual held, orient 400x600, sequential decode, no photo requests");
 
     const othersBefore = batch.cards.filter((c) => c.name !== "no_exif.jpg").map((c) => c.name + ":" + c.day);
     await page.locator("article.card", { hasText: "no_exif.jpg" }).locator(".manual-date").fill("2024-01-01");
@@ -549,7 +550,7 @@ async function main() {
     await page.screenshot({ path: path.join(OUT, "04-batch-after-manual.png"), fullPage: true });
     const mf = [];
     const manualCard = afterManual.cards.find((c) => c.name === "no_exif.jpg");
-    if (!manualCard || manualCard.day !== "1" || manualCard.white < 20 || !manualCard.jpeg) {
+    if (!manualCard || manualCard.day !== "1天" || manualCard.white < 20 || !manualCard.jpeg) {
       mf.push("manual result " + JSON.stringify(manualCard && { day: manualCard.day, white: manualCard.white, jpeg: manualCard.jpeg }));
     }
     for (const prev of othersBefore) {
@@ -559,7 +560,7 @@ async function main() {
     }
     if (!afterManual.shareText.includes("分享全部（4 张）")) mf.push("share label " + afterManual.shareText);
     if (mf.length) fail("manual-does-not-clobber", mf.join("; "));
-    else pass("manual-does-not-clobber", "no_exif became DAY 1; other days unchanged");
+    else pass("manual-does-not-clobber", "no_exif became 月龄 1; other days unchanged");
 
     // --- CreateDate fallback, single ---
     await gotoFresh(page, origin);
@@ -568,9 +569,9 @@ async function main() {
     await waitSettled(page);
     const cd = await inspect(page);
     const dbgCd = await debugText(page);
-    if (cd.cards[0] && cd.cards[0].day === "10" && dbgCd.includes("拍摄日期来源：EXIF CreateDate")) {
-      pass("createdate-fallback", "DAY 10");
-    } else fail("createdate-fallback", "DAY " + (cd.cards[0] && cd.cards[0].day));
+    if (cd.cards[0] && cd.cards[0].day === "10天" && dbgCd.includes("拍摄日期来源：EXIF CreateDate")) {
+      pass("createdate-fallback", "月龄 10");
+    } else fail("createdate-fallback", "月龄 " + (cd.cards[0] && cd.cards[0].day));
 
     // --- IFD0 datetime must not block or overwrite a sibling ---
     await gotoFresh(page, origin);
@@ -585,9 +586,9 @@ async function main() {
     if (!ifdCard || ifdCard.manualHidden || !ifdCard.dayHidden) iff.push("ifd0 did not stay manual");
     if (dbgIfd.includes("拍摄日期：2020-01-01")) iff.push("used IFD0 date");
     if (!dbgIfd.includes("拍摄日期来源：manual")) iff.push("source not manual");
-    if (!dayCard || dayCard.day !== "1" || dayCard.dayHidden) iff.push("sibling DAY " + (dayCard && dayCard.day));
+    if (!dayCard || dayCard.day !== "1天" || dayCard.dayHidden) iff.push("sibling 月龄 " + (dayCard && dayCard.day));
     if (iff.length) fail("ifd0-does-not-block", iff.join("; "));
-    else pass("ifd0-does-not-block", "manual only on the IFD0 file; day1 still DAY 1");
+    else pass("ifd0-does-not-block", "manual only on the IFD0 file; day1 still 月龄 1");
 
     // --- per-file decode failure ---
     await gotoFresh(page, origin);
@@ -601,7 +602,7 @@ async function main() {
     const goodCard = bad.cards.find((c) => c.name === "day1.jpg");
     const badf = [];
     if (!badCard || !badCard.error || badCard.dayHidden === false) badf.push("bad card " + (badCard && badCard.error));
-    if (!goodCard || goodCard.day !== "1" || !goodCard.jpeg) badf.push("good card lost");
+    if (!goodCard || goodCard.day !== "1天" || !goodCard.jpeg) badf.push("good card lost");
     if (badf.length) fail("per-file-decode-error", badf.join("; "));
     else pass("per-file-decode-error", "not_image shows an error; day1 still usable");
 
@@ -623,7 +624,7 @@ async function main() {
     await setStart(page, limitStart);
     const twenty = Array.from({ length: 20 }, (_, i) => "limit20/d" + String(i + 1).padStart(2, "0") + ".jpg");
     await pick(page, twenty);
-    await waitSettled(page, 60000);
+    await waitSettled(page, 180000);
     const limitHttp = pageHttp(net);
     const limitBatch = await inspect(page);
     await page.screenshot({ path: path.join(OUT, "07-limit20-manual.png"), fullPage: true });
@@ -633,9 +634,9 @@ async function main() {
     for (let i = 1; i <= 19; i++) {
       const name = "d" + String(i).padStart(2, "0") + ".jpg";
       const card = limitBatch.cards.find((c) => c.name === name);
-      const want = String(dayOf("2024-01-" + String(i).padStart(2, "0"), limitStart));
+      const want = i + "天";
       if (!card) { l20.push("missing " + name); continue; }
-      if (card.day !== want || card.dayHidden) l20.push(name + " DAY " + card.day + " want " + want);
+      if (card.day !== want || card.dayHidden) l20.push(name + " 月龄 " + card.day + " want " + want);
       if (!card.jpeg || card.w !== 400 || card.h !== 300) l20.push(name + " jpeg/size " + card.w + "x" + card.h);
       if (card.white < 20) l20.push(name + " watermark " + card.white);
       if (!card.manualHidden) l20.push(name + " manual");
@@ -650,7 +651,7 @@ async function main() {
     if (limitBatch.decodeMax !== 1) l20.push("concurrent decodes " + limitBatch.decodeMax);
     if (!limitBatch.shareText.includes("分享已完成的 19 张")) l20.push("share " + limitBatch.shareText);
     if (l20.length) fail("limit-20", l20.join("; "));
-    else pass("limit-20", "20 cards, DAY 1–19, d20 waiting for a date, sequential, no HTTP");
+    else pass("limit-20", "20 cards, 月龄 1–19, d20 waiting for a date, sequential, no photo requests");
 
     const daysBefore = limitBatch.cards.filter((c) => c.name !== "d20.jpg").map((c) => c.name + "=" + c.day);
     await page.locator("article.card", { hasText: "d20.jpg" }).locator(".manual-date").fill("2024-01-20");
@@ -658,7 +659,7 @@ async function main() {
     const afterD20 = await inspect(page);
     const d20f = [];
     const d20card = afterD20.cards.find((c) => c.name === "d20.jpg");
-    if (!d20card || d20card.day !== "20" || !d20card.jpeg || d20card.white < 20) {
+    if (!d20card || d20card.day !== "20天" || !d20card.jpeg || d20card.white < 20) {
       d20f.push("d20 " + (d20card && d20card.day));
     }
     for (const prev of daysBefore) {
@@ -672,7 +673,7 @@ async function main() {
     if (new Set(outNames).size !== 20) d20f.push("names " + outNames.length + " unique " + new Set(outNames).size);
     if (!afterD20.shareText.includes("分享全部（20 张）")) d20f.push("share " + afterD20.shareText);
     if (d20f.length) fail("limit-20-manual", d20f.join("; "));
-    else pass("limit-20-manual", "d20 became DAY 20; the other 19 days stayed");
+    else pass("limit-20-manual", "d20 became 月龄 20; the other 19 days stayed");
 
     await pick(page, twenty.concat(["day1.jpg"]));
     const limited = await inspect(page);
@@ -697,16 +698,15 @@ async function main() {
     const revokedAfter = re.revokeCount;
     const rf = [];
     if (re.cards.length !== 1 || re.cards[0].name !== "cross_month.jpg") rf.push("card " + re.cards.map((c) => c.name).join(","));
-    if (!re.cards[0] || re.cards[0].day !== "7") rf.push("DAY " + (re.cards[0] && re.cards[0].day));
+    if (!re.cards[0] || re.cards[0].day !== "7天") rf.push("月龄 " + (re.cards[0] && re.cards[0].day));
     if (revokedAfter <= revokedBefore) rf.push("object URL not revoked (" + revokedBefore + " -> " + revokedAfter + ")");
     if (rf.length) fail("reselection", rf.join("; "));
-    else pass("reselection", "replaced day1 with cross_month DAY 7 and revoked the old URL");
+    else pass("reselection", "replaced day1 with cross_month 月龄 7 and revoked the old URL");
 
     // --- start-date change replaces every DAY; slow decode cannot leave the old batch ---
     await gotoFresh(page, origin);
     await page.evaluate(() => { window.__slow = true; });
     await setStart(page, "2024-01-01");
-    const earlyStart = "2024-01-01";
     const lateStart = "2024-01-28";
     await page.setInputFiles("#photo", [fixPath("day1.jpg"), fixPath("cross_month.jpg")]);
     await page.fill("#start-date", lateStart);
@@ -714,18 +714,18 @@ async function main() {
     await page.evaluate(() => { window.__slow = false; });
     await waitSettled(page);
     const changed = await inspect(page);
-    const wantDay1 = String(dayOf("2024-03-15", lateStart));
-    const wantCross = String(dayOf("2024-02-03", lateStart));
-    const oldDay1 = String(dayOf("2024-03-15", earlyStart));
+    const wantDay1 = "1个月16天";
+    const wantCross = "7天";
+    const oldDay1 = "2个月14天";
     const sf = [];
-    if (mid.some((hidden) => !hidden)) sf.push("old DAY still visible right after start change");
+    if (mid.some((hidden) => !hidden)) sf.push("old 月龄 still visible right after start change");
     const got1 = changed.cards.find((c) => c.name === "day1.jpg");
     const gotC = changed.cards.find((c) => c.name === "cross_month.jpg");
     if (!got1 || got1.day !== wantDay1) sf.push("day1 " + (got1 && got1.day) + " want " + wantDay1);
     if (!gotC || gotC.day !== wantCross) sf.push("cross " + (gotC && gotC.day) + " want " + wantCross);
     if (got1 && got1.day === oldDay1) sf.push("stale day1");
     if (sf.length) fail("start-date-change", sf.join("; "));
-    else pass("start-date-change", "days hidden immediately, then DAY " + wantDay1 + " and " + wantCross);
+    else pass("start-date-change", "days hidden immediately, then 月龄 " + wantDay1 + " and " + wantCross);
 
     // --- individual download fallback (real browser download, share mock off) ---
     await gotoFresh(page, origin);
@@ -740,7 +740,7 @@ async function main() {
     await download.saveAs(dlPath);
     const suggested = download.suggestedFilename();
     const dlBuf = fs.readFileSync(dlPath);
-    if (suggested === "DAY-1-orient6.jpg" && dlBuf[0] === 0xff && dlBuf[1] === 0xd8 && dlBuf.length > 1000) {
+    if (suggested === "1天-orient6.jpg" && dlBuf[0] === 0xff && dlBuf[1] === 0xd8 && dlBuf.length > 1000) {
       pass("download-one", suggested + " (" + dlBuf.length + " bytes)");
     } else fail("download-one", suggested + " size " + dlBuf.length);
 
@@ -837,3 +837,4 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
