@@ -10,7 +10,7 @@ Publish the `docs/` directory as a project site (subpath `/test/`):
 - Branch: `main`
 - Folder: `/docs`
 
-`docs/index.html` loads `app.js` with a relative URL, so it resolves at `https://grouldbergs.github.io/test/`. `docs/.nojekyll` publishes the files as-is, without Jekyll.
+`docs/index.html` loads `app.js?v=<hash>` with a relative URL, so it resolves under `https://grouldbergs.github.io/test/`. The hash is the start of the SHA-256 of `app.js` and changes when that file changes, so a new page does not keep running a previously cached script. The “最多 N 张” label is written by the loaded script from the same limit that rejects extra photos; the HTML does not hardcode a number. GitHub Pages sends `Cache-Control: max-age=600`. `docs/.nojekyll` publishes the files as-is, without Jekyll.
 
 ## Behavior
 

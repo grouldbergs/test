@@ -9,7 +9,10 @@
  */
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
@@ -211,7 +214,180 @@ function pageHttp(list) {
   return list.filter((r) => r.url.startsWith("http"));
 }
 
+function appHash() {
+  return crypto.createHash("sha256").update(fs.readFileSync(path.join(ROOT, "app.js"))).digest("hex").slice(0, 10);
+}
+
+function checkAssetContract() {
+  const hash = appHash();
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const js = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+  const label = html.match(/id="photo-label">([^<]*)</);
+  const problems = [];
+  if (!html.includes('src="app.js?v=' + hash + '"')) problems.push("script src is not app.js?v=" + hash);
+  if (!label) problems.push("photo-label missing");
+  else if (/\d/.test(label[1])) problems.push("static label states a number: " + label[1]);
+  if (!js.includes("var MAX = 20")) problems.push("MAX is not 20");
+  if (!js.includes('一次最多 " + MAX + " 张')) problems.push("rejection text does not use MAX");
+  if (!js.includes('photoLabel.textContent = "选择照片（最多 " + MAX + " 张）"')) {
+    problems.push("label is not painted from MAX");
+  }
+  if (problems.length) fail("asset-contract", problems.join("; "));
+  else pass("asset-contract", "app.js?v=" + hash + "; the number is painted by that script");
+}
+
+function materializeDocs(rev, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of ["index.html", "app.js"]) {
+    fs.writeFileSync(path.join(dest, name), execFileSync("git", ["show", rev + ":docs/" + name]));
+  }
+}
+
+function startCachedServer() {
+  const state = { root: "", served: [] };
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, "http://127.0.0.1");
+    let rel = decodeURIComponent(url.pathname);
+    if (rel === BASE || rel.startsWith(BASE + "/")) rel = rel.slice(BASE.length) || "/";
+    if (rel === "/") rel = "/index.html";
+    const file = path.normalize(path.join(state.root, rel));
+    if (!state.root || !isInside(state.root, file)) {
+      res.writeHead(403).end();
+      return;
+    }
+    fs.readFile(file, (err, data) => {
+      if (err) {
+        res.writeHead(404).end("not found");
+        return;
+      }
+      const ext = path.extname(file);
+      state.served.push(rel + " " + data.length);
+      res.writeHead(200, {
+        "Content-Type": MIME[ext] || "application/octet-stream",
+        "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=86400",
+      });
+      res.end(data);
+    });
+  });
+  return new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => {
+      resolve({
+        server,
+        origin: "http://127.0.0.1:" + server.address().port,
+        setRoot(next) { state.root = next; },
+        served() { return state.served.slice(); },
+      });
+    });
+    server.on("error", reject);
+  });
+}
+
+async function pageFacts(page) {
+  return page.evaluate(() => ({
+    label: document.querySelector('label[for="photo"]').textContent,
+    error: document.getElementById("error").hidden ? "" : document.getElementById("error").textContent,
+    cards: document.querySelectorAll("article.card").length,
+    scripts: performance.getEntriesByType("resource").filter((e) => e.name.includes("app.js")).map((e) => e.name),
+  }));
+}
+
+async function runCacheUpgrade(browser) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tinydays-cache-"));
+  const oldRoot = path.join(tmp, "v4");
+  const staleRoot = path.join(tmp, "v20-unversioned");
+  materializeDocs("48d3467", oldRoot);
+  materializeDocs("8b07ba9", staleRoot);
+  const cached = await startCachedServer();
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: "zh-CN" });
+  const page = await context.newPage();
+  const scriptReqs = [];
+  page.on("request", (req) => {
+    if (req.url().includes("app.js")) scriptReqs.push(req.url());
+  });
+  const six = Array.from({ length: 6 }, (_, i) => "limit20/d" + String(i + 1).padStart(2, "0") + ".jpg");
+  const twenty = Array.from({ length: 20 }, (_, i) => "limit20/d" + String(i + 1).padStart(2, "0") + ".jpg");
+  try {
+    cached.setRoot(oldRoot);
+    await page.goto(cached.origin + BASE + "/", { waitUntil: "load" });
+    await setStart(page, "2024-01-01");
+    const warmed = await pageFacts(page);
+    await page.setInputFiles("#photo", six.map(fixPath));
+    await page.waitForFunction(() => {
+      const err = document.getElementById("error");
+      return err && !err.hidden && /一次最多 4 张/.test(err.textContent || "");
+    });
+    const rejected = await pageFacts(page);
+    await page.screenshot({ path: path.join(OUT, "08-warm-four-limit.png"), fullPage: true });
+    const warmFails = [];
+    if (!warmed.label.includes("最多 4 张")) warmFails.push("warm label " + warmed.label);
+    if (rejected.cards !== 0) warmFails.push("warm cards " + rejected.cards);
+    if (!rejected.error.includes("一次最多 4 张") || !rejected.error.includes("你这次选了 6 张")) {
+      warmFails.push("warm error " + rejected.error);
+    }
+    if (warmFails.length) fail("cache-warm-v4", warmFails.join("; "));
+    else pass("cache-warm-v4", "6 photos rejected by the cached 4-photo script");
+
+    const reqsBeforeReload = scriptReqs.length;
+    const servedBeforeReload = cached.served().length;
+    cached.setRoot(staleRoot);
+    await page.reload({ waitUntil: "load" });
+    const mismatchLabel = await pageFacts(page);
+    await page.setInputFiles("#photo", six.map(fixPath));
+    await page.waitForFunction(() => {
+      const err = document.getElementById("error");
+      return err && !err.hidden && /你这次选了 6 张/.test(err.textContent || "");
+    });
+    const mismatch = await pageFacts(page);
+    await page.screenshot({ path: path.join(OUT, "09-stale-script.png"), fullPage: true });
+    const servedDuringReload = cached.served().slice(servedBeforeReload);
+    const serverSentJs = servedDuringReload.filter((line) => line.startsWith("/app.js"));
+    const mismatchFails = [];
+    if (!mismatchLabel.label.includes("最多 20 张")) mismatchFails.push("label did not update to the new HTML: " + mismatchLabel.label);
+    if (mismatch.cards !== 0) mismatchFails.push("cards " + mismatch.cards);
+    if (!mismatch.error.includes("一次最多 4 张")) mismatchFails.push("expected stale 4-limit error, got " + mismatch.error);
+    if (serverSentJs.length) mismatchFails.push("server sent a new app.js during reload: " + serverSentJs.join(", "));
+    if (mismatchFails.length) fail("stale-script-mismatch", mismatchFails.join("; "));
+    else pass("stale-script-mismatch", "new HTML promised 20 while the cached 4-photo script still ran; server app.js responses during reload: " + serverSentJs.length + "; browser script events: " + (scriptReqs.length - reqsBeforeReload));
+
+    const beforeFix = scriptReqs.length;
+    cached.setRoot(ROOT);
+    await page.reload({ waitUntil: "load" });
+    await setStart(page, "2024-01-01");
+    const fixedLabel = await pageFacts(page);
+    const versioned = scriptReqs.slice(beforeFix).filter((u) => u.includes("app.js?v=" + appHash()));
+    await pick(page, six);
+    await waitSettled(page, 30000);
+    const sixState = await pageFacts(page);
+    await page.screenshot({ path: path.join(OUT, "10-fixed-six.png"), fullPage: true });
+    await pick(page, twenty);
+    await waitSettled(page, 60000);
+    const twentyState = await pageFacts(page);
+    await pick(page, twenty.concat(["day1.jpg"]));
+    const over = await pageFacts(page);
+    await page.screenshot({ path: path.join(OUT, "11-fixed-reject-21.png"), fullPage: true });
+    const fixFails = [];
+    if (fixedLabel.label !== "选择照片（最多 20 张）") fixFails.push("label " + fixedLabel.label);
+    if (versioned.length !== 1) fixFails.push("versioned script requests " + scriptReqs.slice(beforeFix).join(", "));
+    if (sixState.cards !== 6 || sixState.error) fixFails.push("six cards " + sixState.cards + " error " + sixState.error);
+    if (twentyState.cards !== 20 || twentyState.error) fixFails.push("twenty cards " + twentyState.cards + " error " + twentyState.error);
+    if (over.cards !== 0) fixFails.push("21 left " + over.cards + " cards");
+    if (!over.error.includes("一次最多 20 张") || !over.error.includes("你这次选了 21 张")) {
+      fixFails.push("21 error " + over.error);
+    }
+    const labelLimit = (fixedLabel.label.match(/(\d+)/) || [])[1];
+    const errorLimit = (over.error.match(/一次最多 (\d+) 张/) || [])[1];
+    if (labelLimit !== "20" || errorLimit !== labelLimit) fixFails.push("label limit " + labelLimit + " error limit " + errorLimit);
+    if (fixFails.length) fail("cache-upgrade-to-20", fixFails.join("; "));
+    else pass("cache-upgrade-to-20", "versioned script loaded; 6 and 20 accepted, 21 rejected with the same limit as the label");
+  } finally {
+    await context.close();
+    cached.server.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 async function main() {
+  checkAssetContract();
   const { server, origin } = await startServer();
   const browser = await chromium.launch({
     executablePath: CHROME,
@@ -271,7 +447,7 @@ async function main() {
     await gotoFresh(page, origin);
     await page.screenshot({ path: path.join(OUT, "01-initial.png"), fullPage: true });
 
-    const appJs = responses.filter((r) => r.url === origin + BASE + "/app.js");
+    const appJs = responses.filter((r) => r.url.startsWith(origin + BASE + "/app.js?v="));
     const foreign = responses.filter((r) => {
       const u = r.url;
       if (u.startsWith(origin + BASE + "/") || u === origin + BASE) return false;
@@ -629,6 +805,8 @@ async function main() {
     } else {
       fail("share-fallback", "downloaded=" + downloaded + " shareCalls=" + shareCalls + " text=" + fallback.fallback);
     }
+
+    await runCacheUpgrade(browser);
   } finally {
     await browser.close();
     server.close();
@@ -645,6 +823,7 @@ async function main() {
       "Real HEIC/iPhone photos were not used.",
       "Android was not tested.",
       "iPhone share-all / Save Images was not exercised. The mock only checks the file array passed to canShare and share.",
+      "The stale-script case was reproduced in headless Chromium, not in iPhone Safari.",
     ],
     results,
   };
