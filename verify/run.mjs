@@ -112,16 +112,10 @@ async function waitSettled(page, timeout = 30000) {
   await page.waitForFunction(() => {
     const cards = Array.from(document.querySelectorAll("article.card"));
     if (!cards.length) return false;
-    return cards.every((card) => {
-      const pending = card.querySelector(".pending");
-      if (pending && !pending.hidden) return false;
-      const manual = card.querySelector(".manual");
-      const err = card.querySelector(".card-error");
-      if (manual && !manual.hidden) return true;
-      if (err && !err.hidden && err.textContent) return true;
-      const img = card.querySelector(".preview");
-      return img && !img.hidden && img.complete && img.naturalWidth > 0;
-    });
+    const summary = document.getElementById("batch-summary").textContent;
+    const preview = document.getElementById("example-image");
+    return !/正在读取|正在生成/.test(summary)
+      && (document.getElementById("example").hidden || (preview.complete && preview.naturalWidth > 0));
   }, null, { timeout });
 }
 
@@ -145,41 +139,52 @@ async function inspect(page) {
     }
     const cards = Array.from(document.querySelectorAll("article.card"));
     const out = [];
-    for (const card of cards) {
-      const img = card.querySelector(".preview");
+    const debugRows = document.getElementById("debug-body").textContent.split(/\n—\d+—\n/).slice(1);
+    for (const [index, card] of cards.entries()) {
+      const debugRow = debugRows[index] || "";
+      const capture = debugRow.match(/^保存文件名：(.+)$/m);
       let w = 0;
       let h = 0;
       let midTop = null;
       let white = 0;
       let jpeg = false;
-      if (img && !img.hidden && img.naturalWidth) {
-        w = img.naturalWidth;
-        h = img.naturalHeight;
-        const c = document.createElement("canvas");
-        c.width = w;
-        c.height = h;
-        const ctx = c.getContext("2d");
-        ctx.drawImage(img, 0, 0);
-        const s = sample(ctx, w, h);
-        midTop = s.midTop;
-        white = s.white;
-        if (img.src.startsWith("blob:")) {
-          const buf = new Uint8Array(await (await fetch(img.src)).arrayBuffer());
+      if (capture) {
+        let file;
+        const wasMocked = window.__mockShare;
+        const previous = window.__shareLog;
+        window.__mockShare = true;
+        window.__shareLog = [];
+        card.querySelector(".save-one").click();
+        file = window.__shareLog[0]?.[0]?.file;
+        window.__shareLog = previous;
+        window.__mockShare = wasMocked;
+        if (file) {
+          const bitmap = await window.__originalCreateImageBitmap(file);
+          w = bitmap.width;
+          h = bitmap.height;
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(bitmap, 0, 0);
+          bitmap.close();
+          ({ midTop, white } = sample(ctx, w, h));
+          const buf = new Uint8Array(await file.arrayBuffer());
           jpeg = buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
         }
       }
       const manual = card.querySelector(".manual");
       const err = card.querySelector(".card-error");
-      const dayLine = card.querySelector(".day-line");
+      const date = debugRow.match(/^拍摄日期：(.+)$/m)?.[1] || "";
       out.push({
         name: card.querySelector(".file-name").textContent,
-        exif: card.querySelector(".exif-line").textContent,
+        exif: date,
         manualHidden: manual.hidden,
         manualText: manual.querySelector("p").textContent,
         error: err.hidden ? "" : err.textContent,
-        dayHidden: dayLine.hidden,
-        day: dayLine.textContent,
-        outName: card.querySelector(".out-name").textContent,
+        dayHidden: !capture,
+        day: capture ? capture[1].split("-")[0] : "",
+        outName: capture ? "保存文件名：" + capture[1] : "",
         w, h, midTop, white, jpeg,
       });
     }
@@ -402,6 +407,7 @@ async function main() {
     window.__mockShare = false;
     window.__decodeMax = 0;
     window.__slow = false;
+    window.__originalCreateImageBitmap = window.createImageBitmap.bind(window);
     window.__revokeCount = 0;
     const origRevoke = URL.revokeObjectURL.bind(URL);
     URL.revokeObjectURL = function (u) {
@@ -421,12 +427,12 @@ async function main() {
     };
     navigator.canShare = function (data) {
       const files = data && data.files ? Array.from(data.files) : [];
-      window.__canShareLog.push(files.map((f) => ({ name: f.name, type: f.type, size: f.size })));
+      window.__canShareLog.push(files.map((f) => ({ name: f.name, type: f.type, size: f.size, file: f })));
       return window.__mockShare && files.length > 0;
     };
     navigator.share = function (data) {
       const files = data && data.files ? Array.from(data.files) : [];
-      window.__shareLog.push(files.map((f) => ({ name: f.name, type: f.type, size: f.size })));
+      window.__shareLog.push(files.map((f) => ({ name: f.name, type: f.type, size: f.size, file: f })));
       if (window.__mockShare) return Promise.resolve();
       return Promise.reject(new Error("share unavailable"));
     };
@@ -513,6 +519,12 @@ async function main() {
       "orient6.jpg": "3个月19天",
     };
     const bf = [];
+    const summary = await page.locator("#batch-summary").innerText();
+    if (!summary.includes("已选 4 张") || !summary.includes("3 张已自动识别日期") || !summary.includes("1 张需要补拍摄日期")) bf.push("batch summary " + summary);
+    if (await page.locator("#example-image:visible").count() !== 1) bf.push("exactly one stamped example expected");
+    if (await page.locator("#cards .card:visible").count() !== 1) bf.push("only the missing-date card should appear");
+    await page.waitForFunction(() => document.querySelector("#cards .original:not([hidden])")?.naturalWidth > 0);
+
     if (batch.cards.length !== 4) bf.push("cards " + batch.cards.length);
     for (const [name, day] of Object.entries(expectDays)) {
       const card = batch.cards.find((c) => c.name === name);
@@ -710,7 +722,7 @@ async function main() {
     const lateStart = "2024-01-28";
     await page.setInputFiles("#photo", [fixPath("day1.jpg"), fixPath("cross_month.jpg")]);
     await page.fill("#start-date", lateStart);
-    const mid = await page.evaluate(() => Array.from(document.querySelectorAll(".day-line")).map((el) => el.hidden));
+    const mid = await page.evaluate(() => [document.getElementById("example").hidden]);
     await page.evaluate(() => { window.__slow = false; });
     await waitSettled(page);
     const changed = await inspect(page);
@@ -734,7 +746,7 @@ async function main() {
     await waitSettled(page);
     const [download] = await Promise.all([
       page.waitForEvent("download", { timeout: 8000 }),
-      page.locator(".save-one").click(),
+      page.locator("#example-save").click(),
     ]);
     const dlPath = path.join(OUT, "downloaded-orient6.jpg");
     await download.saveAs(dlPath);
@@ -837,4 +849,5 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
 

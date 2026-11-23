@@ -62,6 +62,7 @@
     .manual p { margin: 0 0 0.6rem; }
     .card-error, #error { color: var(--err); margin: 0 0 0.75rem; }
     .pending { margin: 0 0 0.75rem; color: var(--muted); }
+    .original { display: block; max-width: 100%; max-height: 12rem; margin-bottom: 0.65rem; }
     .preview {
       display: block;
       width: 100%;
@@ -105,12 +106,18 @@
   </div>
 
   <p id="error" hidden></p>
+  <p id="batch-summary" role="status" hidden></p>
+  <section id="example" hidden>
+    <h2>水印效果示例</h2>
+    <img id="example-image" class="preview" alt="加上月龄水印的示例照片">
+    <button id="example-save" type="button">保存这张</button>
+  </section>
   <div id="cards"></div>
 
   <p id="share-note" class="note" hidden>只会打开系统分享，不会自动写入相册。</p>
   <p id="share-incomplete" class="note" hidden>还有照片没完成，这次分享不包括它们。</p>
   <button id="share-all" type="button" hidden>分享全部</button>
-  <p id="share-fallback" class="note" hidden>这个浏览器不能一次分享多张。请逐张点「保存这张」，或长按图片。</p>
+  <p id="share-fallback" class="note" hidden>这个浏览器不能一次分享多张。请在下方逐张保存。</p>
 
   <section id="debug">
     <h2>调试信息</h2>
@@ -118,7 +125,6 @@
   </section>
 
   <canvas id="work"></canvas>
-  <script type="module" src="app.js?v=1060d83a1f"></script>
+  <script type="module" src="app.js?v=e04d6bc56b"></script>
 </body>
 </html>
-
