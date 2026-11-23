@@ -18,12 +18,12 @@ Publish the `docs/` directory as a project site (subpath `/test/`):
 - DAY = (photo calendar date − start calendar date) + 1.
 - The shoot date is EXIF DateTimeOriginal, then EXIF CreateDate.
 - If those are missing, the page asks for a date. It does not substitute the file modification time.
-- Up to 4 photos can be selected. Choosing more than 4 shows an error and processes none of them.
+- Up to 20 photos can be selected. Choosing more than 20 shows an error and processes none of them.
 - Each photo uses the shared start date and its own shoot date. A photo with no EXIF date asks for a date without clearing the others.
 - The result is a JPEG named `DAY-<n>-<original>.jpg`. Per photo, save uses the system share sheet when the browser can share that file, otherwise it downloads that one file.
 - 分享全部 calls `navigator.canShare({ files })` and `navigator.share({ files })` from the button tap. If the browser cannot share the files, the page does not download them all; use each photo's button or a long-press instead. This does not write the batch into Photos by itself.
 
-The automated check does not cover real HEIC photos, Android, or whether an iPhone share sheet can save every image in one step.
+The automated check uses small synthetic JPEGs in desktop Chrome. It does not show whether Safari can decode, preview, or share 20 full-resolution iPhone photos; that is still a phone stress test. It also does not cover real HEIC photos or Android.
 
 ## Verify locally
 

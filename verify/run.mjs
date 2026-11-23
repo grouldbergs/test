@@ -21,7 +21,8 @@ const BASE = "/test";
 const CHROME = process.env.CHROME_PATH
   || (fs.existsSync("/usr/bin/google-chrome-stable") ? "/usr/bin/google-chrome-stable" : "/usr/bin/google-chrome");
 
-if (!fs.existsSync(path.join(FIX, "day1.jpg")) || !fs.existsSync(path.join(FIX, "not_image.jpg"))) {
+if (!fs.existsSync(path.join(FIX, "day1.jpg")) || !fs.existsSync(path.join(FIX, "not_image.jpg"))
+  || !fs.existsSync(path.join(FIX, "limit20", "d20.jpg"))) {
   console.error("Missing fixtures. Run: python3 verify/generate_fixtures.py");
   process.exit(1);
 }
@@ -103,12 +104,12 @@ async function pick(page, names) {
   await page.waitForFunction((n) => {
     const cards = document.querySelectorAll("article.card").length;
     const err = document.getElementById("error");
-    const limit = err && !err.hidden && /一次最多 4 张/.test(err.textContent || "");
-    return cards === n || (n > 4 && limit && cards === 0);
+    const limit = err && !err.hidden && /一次最多 \d+ 张/.test(err.textContent || "");
+    return cards === n || (n > 20 && limit && cards === 0);
   }, names.length);
 }
 
-async function waitSettled(page) {
+async function waitSettled(page, timeout = 15000) {
   await page.waitForFunction(() => {
     const cards = Array.from(document.querySelectorAll("article.card"));
     if (!cards.length) return false;
@@ -122,7 +123,7 @@ async function waitSettled(page) {
       const img = card.querySelector(".preview");
       return img && !img.hidden && img.complete && img.naturalWidth > 0;
     });
-  }, null, { timeout: 15000 });
+  }, null, { timeout });
 }
 
 async function inspect(page) {
@@ -285,7 +286,7 @@ async function main() {
     if ((await page.title()) !== "TinyDays") subFails.push("title");
     if (!(await page.locator(".lead").innerText()).includes("原图不会离开这台设备")) subFails.push("lead");
     if (multiple === null) subFails.push("file input is not multiple");
-    if (!label.includes("最多 4 张")) subFails.push("limit label missing");
+    if (!label.includes("最多 20 张")) subFails.push("limit label missing: " + label);
     if (page.url() !== origin + BASE + "/") subFails.push("url " + page.url());
     if (subFails.length) fail("pages-subpath", subFails.join("; "));
     else pass("pages-subpath", BASE + "/ with multiple file input");
@@ -439,22 +440,74 @@ async function main() {
       pass("distinct-output-names", dupNames.join(" | "));
     } else fail("distinct-output-names", dupNames.join(" | "));
 
-    // --- more than 4 is visible and processes nothing ---
+    // --- 20 accepted, including one manual date; 21 rejected with none kept ---
     await gotoFresh(page, origin);
-    await setStart(page, "2024-03-15");
-    await pick(page, ["day1.jpg"]);
-    await waitSettled(page);
-    const beforeLimit = await inspect(page);
-    await pick(page, ["day1.jpg", "cross_month.jpg", "year_cross.jpg", "orient6.jpg", "no_exif.jpg"]);
+    net.length = 0;
+    const limitStart = "2024-01-01";
+    await setStart(page, limitStart);
+    const twenty = Array.from({ length: 20 }, (_, i) => "limit20/d" + String(i + 1).padStart(2, "0") + ".jpg");
+    await pick(page, twenty);
+    await waitSettled(page, 60000);
+    const limitHttp = pageHttp(net);
+    const limitBatch = await inspect(page);
+    await page.screenshot({ path: path.join(OUT, "07-limit20-manual.png"), fullPage: true });
+    const l20 = [];
+    if (limitBatch.cards.length !== 20) l20.push("cards " + limitBatch.cards.length);
+    const seenNames = new Set();
+    for (let i = 1; i <= 19; i++) {
+      const name = "d" + String(i).padStart(2, "0") + ".jpg";
+      const card = limitBatch.cards.find((c) => c.name === name);
+      const want = String(dayOf("2024-01-" + String(i).padStart(2, "0"), limitStart));
+      if (!card) { l20.push("missing " + name); continue; }
+      if (card.day !== want || card.dayHidden) l20.push(name + " DAY " + card.day + " want " + want);
+      if (!card.jpeg || card.w !== 400 || card.h !== 300) l20.push(name + " jpeg/size " + card.w + "x" + card.h);
+      if (card.white < 20) l20.push(name + " watermark " + card.white);
+      if (!card.manualHidden) l20.push(name + " manual");
+      if (seenNames.has(card.outName)) l20.push("dup " + card.outName);
+      seenNames.add(card.outName);
+    }
+    const d20 = limitBatch.cards.find((c) => c.name === "d20.jpg");
+    if (!d20 || d20.manualHidden || !d20.dayHidden || !d20.manualText.includes("没有读到拍摄日期，请手动选择。")) {
+      l20.push("d20 manual prompt");
+    }
+    if (limitHttp.length) l20.push("HTTP " + limitHttp.map((r) => r.url).join(", "));
+    if (limitBatch.decodeMax !== 1) l20.push("concurrent decodes " + limitBatch.decodeMax);
+    if (!limitBatch.shareText.includes("分享已完成的 19 张")) l20.push("share " + limitBatch.shareText);
+    if (l20.length) fail("limit-20", l20.join("; "));
+    else pass("limit-20", "20 cards, DAY 1–19, d20 waiting for a date, sequential, no HTTP");
+
+    const daysBefore = limitBatch.cards.filter((c) => c.name !== "d20.jpg").map((c) => c.name + "=" + c.day);
+    await page.locator("article.card", { hasText: "d20.jpg" }).locator(".manual-date").fill("2024-01-20");
+    await waitSettled(page, 20000);
+    const afterD20 = await inspect(page);
+    const d20f = [];
+    const d20card = afterD20.cards.find((c) => c.name === "d20.jpg");
+    if (!d20card || d20card.day !== "20" || !d20card.jpeg || d20card.white < 20) {
+      d20f.push("d20 " + (d20card && d20card.day));
+    }
+    for (const prev of daysBefore) {
+      const eq = prev.indexOf("=");
+      const name = prev.slice(0, eq);
+      const day = prev.slice(eq + 1);
+      const card = afterD20.cards.find((c) => c.name === name);
+      if (!card || card.day !== day) d20f.push(name + " changed to " + (card && card.day));
+    }
+    const outNames = afterD20.cards.map((c) => c.outName);
+    if (new Set(outNames).size !== 20) d20f.push("names " + outNames.length + " unique " + new Set(outNames).size);
+    if (!afterD20.shareText.includes("分享全部（20 张）")) d20f.push("share " + afterD20.shareText);
+    if (d20f.length) fail("limit-20-manual", d20f.join("; "));
+    else pass("limit-20-manual", "d20 became DAY 20; the other 19 days stayed");
+
+    await pick(page, twenty.concat(["day1.jpg"]));
     const limited = await inspect(page);
     await page.screenshot({ path: path.join(OUT, "05-over-limit.png"), fullPage: true });
     const lf = [];
-    if (beforeLimit.cards.length !== 1) lf.push("setup");
     if (limited.cards.length !== 0) lf.push("still has " + limited.cards.length + " cards");
-    if (!limited.error.includes("你这次选了 5 张")) lf.push("error " + limited.error);
+    if (!limited.error.includes("一次最多 20 张")) lf.push("limit text " + limited.error);
+    if (!limited.error.includes("你这次选了 21 张")) lf.push("count text " + limited.error);
     if (!limited.error.includes("都没有处理")) lf.push("does not say nothing was processed");
-    if (lf.length) fail("over-limit", lf.join("; "));
-    else pass("over-limit", limited.error);
+    if (lf.length) fail("over-limit-21", lf.join("; "));
+    else pass("over-limit-21", limited.error);
 
     // --- reselection drops the previous photo ---
     await gotoFresh(page, origin);
@@ -588,6 +641,7 @@ async function main() {
     chrome: CHROME,
     shareNote: "share-all-mock replaces navigator.canShare and navigator.share in the page. It is not an iOS or Android share sheet.",
     unverified: [
+      "Desktop Chrome and these small synthetic JPEGs do not show whether Safari can decode, preview, or share 20 full-resolution iPhone photos. That phone stress test is still open.",
       "Real HEIC/iPhone photos were not used.",
       "Android was not tested.",
       "iPhone share-all / Save Images was not exercised. The mock only checks the file array passed to canShare and share.",
