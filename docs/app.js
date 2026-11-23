@@ -1,11 +1,12 @@
 import { calculateMonthAge } from "./month-age.mjs";
-import { renderTemplate03 } from "./template-03.mjs";
+import { prepareTemplate03, renderTemplate03 } from "./template-03.mjs?v=fd4afb15d0";
 
 /* TinyDays: stamp month age on up to 20 photos locally. Never upload. */
 (function () {
   "use strict";
 
   var MAX = 20;
+  var STAMP_WIDTH_RATIO = 0.20;
   var START_KEY = "tinydays-birth-date";
   var TAG_ORIENTATION = 0x0112;
   var TAG_DATETIME = 0x0132;
@@ -18,6 +19,13 @@ import { renderTemplate03 } from "./template-03.mjs";
   var photoLabel = document.getElementById("photo-label");
   photoLabel.textContent = "选择照片（最多 " + MAX + " 张）";
   var errorEl = document.getElementById("error");
+  var summary = document.getElementById("batch-summary");
+  var example = document.getElementById("example");
+  var exampleImage = document.getElementById("example-image");
+  var exampleSave = document.getElementById("example-save");
+  var exampleItem = null;
+  var exampleUrl = "";
+  var stamps = new Map();
   var cardsEl = document.getElementById("cards");
   var shareNote = document.getElementById("share-note");
   var shareIncomplete = document.getElementById("share-incomplete");
@@ -36,6 +44,11 @@ import { renderTemplate03 } from "./template-03.mjs";
   startInput.addEventListener("change", onStartChange);
   photoInput.addEventListener("change", onPhotoPicked);
   shareAllBtn.addEventListener("click", onShareAll);
+  exampleSave.addEventListener("click", function () {
+    if (exampleItem) saveOne(exampleItem);
+  });
+  // Load public renderer assets while the user is entering the birthday or choosing photos.
+  prepareTemplate03().catch(function () {});
 
   function onPhotoPicked() {
     var files = photoInput.files ? Array.prototype.slice.call(photoInput.files) : [];
@@ -44,7 +57,11 @@ import { renderTemplate03 } from "./template-03.mjs";
     var myJob = job;
     selection += 1;
     var sel = selection;
-    items.forEach(clearOutput);
+    items.forEach(function (item) {
+      if (item.originalUrl) URL.revokeObjectURL(item.originalUrl);
+    });
+    clearExample();
+    stamps.clear();
     items = [];
     cardsEl.textContent = "";
     shareFallback.hidden = true;
@@ -67,7 +84,7 @@ import { renderTemplate03 } from "./template-03.mjs";
         shoot: null,
         age: null,
         outBlob: null,
-        outUrl: "",
+        originalUrl: "",
         outName: "",
         error: "",
         decodeNote: "",
@@ -120,25 +137,29 @@ import { renderTemplate03 } from "./template-03.mjs";
     return next;
   }
 
-  function runJob(myJob) {
-    var index = 0;
-    function next() {
-      if (myJob !== job) return Promise.resolve();
-      if (index >= items.length) {
+  async function runJob(myJob) {
+    var batch = items;
+    for (var item of batch) {
+      if (myJob !== job) return;
+      if (!item.exifReady) {
+        await readOne(item);
+        if (myJob !== job) return;
         updateShare();
-        updateDebug();
-        return Promise.resolve();
       }
-      var item = items[index++];
-      return ensure(item, myJob).then(next, next);
     }
-    return next();
+    for (var item of batch) {
+      if (myJob !== job) return;
+      await ensure(item, myJob);
+    }
+    if (myJob === job) {
+      updateShare();
+      updateDebug();
+    }
   }
 
   function ensure(item, myJob) {
     if (myJob !== job || item.sel !== selection) return Promise.resolve();
-    var prep = item.exifReady ? Promise.resolve() : readOne(item);
-    return prep.then(function () {
+    return Promise.resolve().then(function () {
       if (myJob !== job || item.sel !== selection) return;
       if (item.readError) {
         item.pending = false;
@@ -196,7 +217,15 @@ import { renderTemplate03 } from "./template-03.mjs";
   }
 
   function readOne(item) {
-    return item.file.arrayBuffer().then(function (buf) {
+    // JPEG EXIF normally fits in its initial APP segments. Only read the full
+    // file when the prefix does not provide a date, or for other containers.
+    return item.file.slice(0, 128 * 1024).arrayBuffer().then(function (prefix) {
+      if (item.sel !== selection) return null;
+      var bytes = new Uint8Array(prefix);
+      if (prefix.byteLength === item.file.size ||
+          (bytes[0] === 0xff && bytes[1] === 0xd8 && dateFromExif(readExif(prefix)))) return prefix;
+      return item.file.arrayBuffer();
+    }).then(function (buf) {
       if (item.sel !== selection) return;
       try {
         item.exif = readExif(buf);
@@ -234,18 +263,14 @@ import { renderTemplate03 } from "./template-03.mjs";
       var manualId = "manual-" + item.sel + "-" + index;
       art.innerHTML =
         '<p class="file-name"></p>' +
-        '<p class="exif-line" hidden></p>' +
         '<div class="manual" hidden>' +
+          '<img class="original" alt="待补日期的原照片" loading="lazy" decoding="async" hidden>' +
+          '<p class="original-error" hidden>浏览器无法预览这张原照片，请按文件名确认。</p>' +
           '<p>没有读到拍摄日期，请手动选择。</p>' +
           '<label for="' + manualId + '">拍摄日期</label>' +
           '<input class="manual-date" id="' + manualId + '" type="date">' +
         "</div>" +
         '<p class="card-error" hidden></p>' +
-        '<p class="pending" hidden></p>' +
-        '<p class="day-line" hidden></p>' +
-        '<img class="preview" alt="加上水印后的照片" hidden>' +
-        '<p class="out-name" hidden></p>' +
-        '<p class="save-hint" hidden>也可以长按图片，选择保存到相册。</p>' +
         '<button class="save-one" type="button" hidden>保存这张</button>';
       art.querySelector(".manual-date").addEventListener("change", function () {
         onManualChange(item);
@@ -263,50 +288,70 @@ import { renderTemplate03 } from "./template-03.mjs";
     var el = item.el;
     if (!el) return;
     el.querySelector(".file-name").textContent = item.file.name || "（无文件名）";
-    var exifLine = el.querySelector(".exif-line");
     var manual = el.querySelector(".manual");
+    var original = el.querySelector(".original");
     var err = el.querySelector(".card-error");
-    var pending = el.querySelector(".pending");
-    var dayLine = el.querySelector(".day-line");
-    var preview = el.querySelector(".preview");
-    var outName = el.querySelector(".out-name");
-    var hint = el.querySelector(".save-hint");
     var saveBtn = el.querySelector(".save-one");
 
     var showManual = item.exifReady && item.dateSource === "manual" && !item.readError;
     manual.hidden = !showManual;
-    if (item.shoot && item.dateSource && item.dateSource !== "manual") {
-      exifLine.hidden = false;
-      exifLine.textContent = "读取到的拍摄日期：" + item.shoot.iso;
-    } else {
-      exifLine.hidden = true;
-      exifLine.textContent = "";
+    if (showManual && !item.originalUrl) {
+      item.originalUrl = URL.createObjectURL(item.file);
+      original.onload = function () { original.hidden = false; };
+      original.onerror = function () {
+        original.hidden = true;
+        el.querySelector(".original-error").hidden = false;
+      };
+      original.hidden = false;
+      original.src = item.originalUrl;
     }
     err.hidden = !item.error;
     err.textContent = item.error || "";
-    var showResult = !!(item.outUrl && item.age != null && !item.error);
-    dayLine.hidden = !showResult;
-    if (showResult) dayLine.textContent = item.age.displayText;
-    pending.hidden = !item.pending;
-    pending.textContent = item.exifReady ? "处理中…" : "读取中…";
-    if (showResult) {
-      if (preview.getAttribute("src") !== item.outUrl) preview.src = item.outUrl;
-      preview.alt = "加上水印后的照片：" + (item.file.name || "");
-      preview.hidden = false;
-      outName.hidden = false;
-      outName.textContent = "保存文件名：" + item.outName;
-    } else {
-      preview.hidden = true;
-      preview.removeAttribute("src");
-      outName.hidden = true;
-      outName.textContent = "";
-    }
-    hint.hidden = !showResult;
-    saveBtn.hidden = !showResult;
+    var showFallback = !shareFallback.hidden && isReady(item);
+    saveBtn.hidden = !showFallback;
+    el.hidden = !showManual && !item.error && !showFallback;
+  }
+
+  function clearExample() {
+    if (exampleUrl) URL.revokeObjectURL(exampleUrl);
+    exampleUrl = "";
+    exampleItem = null;
+    example.hidden = true;
+    exampleImage.removeAttribute("src");
+  }
+
+  function updateSummary(readyCount) {
+    summary.hidden = items.length === 0;
+    if (summary.hidden) return;
+    var start = parseIsoDate(startInput.value);
+    var automatic = items.filter(function (item) {
+      return item.dateSource && item.dateSource !== "manual" && !item.error &&
+        (!start || item.shoot.iso >= start.iso);
+    }).length;
+    var missing = items.filter(function (item) {
+      return item.dateSource === "manual" && !parseIsoDate(item.el.querySelector(".manual-date").value);
+    }).length;
+    var reading = items.some(function (item) { return !item.exifReady; });
+    summary.textContent = "已选 " + items.length + " 张。" + (reading ? "正在读取拍摄日期…" :
+      automatic + " 张已自动识别日期，可直接添加水印。" +
+      (missing ? " " + missing + " 张需要补拍摄日期。" : "") +
+      (readyCount ? " 已生成 " + readyCount + " 张。" : "") +
+      (start && items.some(function (item) { return item.pending; }) ? " 正在生成…" : ""));
   }
 
   function updateShare() {
     var ready = items.filter(isReady);
+    updateSummary(ready.length);
+    var nextExample = ready[0] || null;
+    if (nextExample !== exampleItem) {
+      clearExample();
+      if (nextExample) {
+        exampleItem = nextExample;
+        exampleUrl = URL.createObjectURL(nextExample.outBlob);
+        exampleImage.src = exampleUrl;
+        example.hidden = false;
+      }
+    }
     var show = items.length >= 2 && ready.length >= 1;
     shareAllBtn.hidden = !show;
     shareNote.hidden = !show;
@@ -331,10 +376,7 @@ import { renderTemplate03 } from "./template-03.mjs";
     item.age = null;
     item.outBlob = null;
     item.outName = "";
-    if (item.outUrl) {
-      URL.revokeObjectURL(item.outUrl);
-      item.outUrl = "";
-    }
+    if (item === exampleItem) clearExample();
   }
 
   function showError(msg) {
@@ -552,10 +594,7 @@ import { renderTemplate03 } from "./template-03.mjs";
   /* ---- image + watermark, one photo at a time ---- */
 
   function doStamp(item, age, myJob) {
-    return renderTemplate03(age).then(function (png) {
-      if (myJob !== job || item.sel !== selection) return null;
-      return loadStampImage(png);
-    }).then(async function (stamp) {
+    return stampFor(age).then(async function (stamp) {
       if (!stamp || myJob !== job || item.sel !== selection) return null;
       var img = await loadOrientedImage(item);
       if (myJob !== job || item.sel !== selection) {
@@ -576,7 +615,7 @@ import { renderTemplate03 } from "./template-03.mjs";
       ctx.drawImage(img, 0, 0, w, h);
       closeImg(img);
 
-      var stampWidth = w * 0.28;
+      var stampWidth = w * STAMP_WIDTH_RATIO;
       var stampHeight = stampWidth * stamp.naturalHeight / stamp.naturalWidth;
       ctx.drawImage(stamp, w * 0.05, h * 0.97 - stampHeight, stampWidth, stampHeight);
 
@@ -593,7 +632,6 @@ import { renderTemplate03 } from "./template-03.mjs";
       item.age = age;
       item.outBlob = blob;
       item.outName = uniqueName(item);
-      item.outUrl = URL.createObjectURL(blob);
       item.pending = false;
       item.error = "";
       updateCard(item);
@@ -609,6 +647,18 @@ import { renderTemplate03 } from "./template-03.mjs";
       updateShare();
       updateDebug();
     });
+  }
+
+  function stampFor(age) {
+    var key = age.dateText + ":" + age.displayText;
+    if (stamps.has(key)) return stamps.get(key);
+    var promise = renderTemplate03(age).then(loadStampImage).catch(function (error) {
+      if (stamps.get(key) === promise) stamps.delete(key);
+      throw error;
+    });
+    stamps.set(key, promise);
+    if (stamps.size > 4) stamps.delete(stamps.keys().next().value);
+    return promise;
   }
 
   function loadStampImage(png) {
@@ -718,8 +768,14 @@ import { renderTemplate03 } from "./template-03.mjs";
     downloadFile(outFile);
   }
 
+  function showShareFallback() {
+    shareFallback.hidden = false;
+    items.forEach(updateCard);
+  }
+
   function onShareAll() {
     shareFallback.hidden = true;
+    items.forEach(updateCard);
     var ready = items.filter(isReady);
     if (!ready.length) return;
     var files = ready.map(function (item) {
@@ -734,11 +790,11 @@ import { renderTemplate03 } from "./template-03.mjs";
     if (canShare && navigator.share) {
       navigator.share({ files: files }).catch(function (err) {
         if (err && err.name === "AbortError") return;
-        shareFallback.hidden = false;
+        showShareFallback();
       });
       return;
     }
-    shareFallback.hidden = false;
+    showShareFallback();
   }
 
   function downloadFile(file) {
@@ -754,4 +810,3 @@ import { renderTemplate03 } from "./template-03.mjs";
 
   updateDebug();
 })();
-

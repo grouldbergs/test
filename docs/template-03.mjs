@@ -365,8 +365,12 @@ function measureHeadlineInk(content, layout) {
 export function template03Svg(content, layoutName = 'number-emphasis') {
     void layoutName;
     const layout = planHeadline(content);
-    const headlineInk = measureHeadlineInk(content, layout);
-    const headlineTranslateX = Math.min(0, CANVAS_WIDTH - RIGHT_SAFETY_MARGIN - headlineInk.right);
+    const rightLimit = CANVAS_WIDTH - RIGHT_SAFETY_MARGIN;
+    // The measurement surface extends by this padding, so a headline already
+    // inside that envelope cannot need a corrective left shift.
+    const headlineTranslateX = Math.ceil(layout.headlineRight + HEADLINE_MEASUREMENT_PADDING) <= rightLimit
+        ? 0
+        : Math.min(0, rightLimit - measureHeadlineInk(content, layout).right);
     const headlineLeft = layout.headlineLeft + headlineTranslateX;
     const headlineRight = layout.headlineRight + headlineTranslateX;
     const underlineLeft = headlineLeft + 10;
@@ -380,12 +384,15 @@ export function template03Svg(content, layoutName = 'number-emphasis') {
   ${template01DividerSvg(underlineLeft, underlineRight, UNDERLINE_Y, DIVIDER_STROKE_WIDTH)}
 </svg>`;
 }
-export async function renderTemplate03(content) {
+export function prepareTemplate03() {
     ready ??= loadRenderer().catch(error => {
         ready = undefined;
         throw error;
     });
-    await ready;
+    return ready;
+}
+export async function renderTemplate03(content) {
+    await prepareTemplate03();
     const renderer = createRenderer(template03Svg(content));
     try {
         const bounds = renderer.getBBox();
