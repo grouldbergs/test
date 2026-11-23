@@ -1,6 +1,6 @@
 # test
 
-Static mobile page that stamps a DAY watermark on a photo in the browser. The interface is Chinese. Photos, EXIF reading, the DAY calculation, and watermark drawing stay on the device.
+Static mobile page that stamps a TinyDays Template 03 month-age watermark on a photo in the browser. The interface is Chinese. Photos, EXIF reading, the month-age calculation, and watermark drawing stay on the device.
 
 ## GitHub Pages
 
@@ -14,16 +14,20 @@ Publish the `docs/` directory as a project site (subpath `/test/`):
 
 ## Behavior
 
-- The start date is saved in `localStorage` on this device.
-- DAY = (photo calendar date − start calendar date) + 1.
+- The baby’s birth date is saved in `localStorage` on this device.
+- Age is calculated by calendar date using the TinyDays Template 03 rules. Photos dated before birth show an individual error.
 - The shoot date is EXIF DateTimeOriginal, then EXIF CreateDate.
 - If those are missing, the page asks for a date. It does not substitute the file modification time.
 - Up to 20 photos can be selected. Choosing more than 20 shows an error and processes none of them.
-- Each photo uses the shared start date and its own shoot date. A photo with no EXIF date asks for a date without clearing the others.
-- The result is a JPEG named `DAY-<n>-<original>.jpg`. Per photo, save uses the system share sheet when the browser can share that file, otherwise it downloads that one file.
+- Each photo uses the shared birth date and its own shoot date. A photo with no EXIF date asks for a date without clearing the others.
+- The result is a JPEG named `<age>-<original>.jpg`. Per photo, save uses the system share sheet when the browser can share that file, otherwise it downloads that one file.
 - 分享全部 calls `navigator.canShare({ files })` and `navigator.share({ files })` from the button tap. If the browser cannot share the files, the page does not download them all; use each photo's button or a long-press instead. This does not write the batch into Photos by itself.
 
 The automated check uses small synthetic JPEGs in desktop Chrome. It does not show whether Safari can decode, preview, or share 20 full-resolution iPhone photos; that is still a phone stress test. It also does not cover real HEIC photos or Android.
+
+## Browser renderer
+
+`docs/month-age.mjs` and `docs/template-03.mjs` come from TinyDays Template 03 at `4dbeac2`. The browser adapter swaps native resvg and filesystem reads for WebAssembly and same-origin static assets. The vendored resvg 2.6.2 build and corresponding source are available from [resvg-js](https://github.com/yisibl/resvg-js/tree/v2.6.2) under MPL-2.0. The Kalam font license is in `docs/month-age-assets/OFL.txt`. The browser loads these static assets on first render. The birth date, shooting date and photo pixels stay on the device. This MVP has no redemption or activation step.
 
 ## Verify locally
 
@@ -37,3 +41,4 @@ node verify/run.mjs
 ```
 
 The runner serves `docs/` at `http://127.0.0.1:<port>/test/` and writes screenshots to `verify/output/`. That directory is not part of the Pages site. Chrome is `/usr/bin/google-chrome-stable` unless `CHROME_PATH` is set.
+

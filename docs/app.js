@@ -1,9 +1,12 @@
-/* TinyDays: stamp DAY on up to 20 photos locally. Never upload. */
+import { calculateMonthAge } from "./month-age.mjs";
+import { renderTemplate03 } from "./template-03.mjs";
+
+/* TinyDays: stamp month age on up to 20 photos locally. Never upload. */
 (function () {
   "use strict";
 
   var MAX = 20;
-  var START_KEY = "tinydays-start-date";
+  var START_KEY = "tinydays-birth-date";
   var TAG_ORIENTATION = 0x0112;
   var TAG_DATETIME = 0x0132;
   var TAG_EXIF_IFD = 0x8769;
@@ -29,7 +32,7 @@
   var job = 0;
   var chain = Promise.resolve();
 
-  startInput.value = localStorage.getItem(START_KEY) || "";
+  try { startInput.value = localStorage.getItem(START_KEY) || ""; } catch {}
   startInput.addEventListener("change", onStartChange);
   photoInput.addEventListener("change", onPhotoPicked);
   shareAllBtn.addEventListener("click", onShareAll);
@@ -62,7 +65,7 @@
         readError: "",
         dateSource: null,
         shoot: null,
-        day: null,
+        age: null,
         outBlob: null,
         outUrl: "",
         outName: "",
@@ -79,7 +82,7 @@
   }
 
   function onStartChange() {
-    localStorage.setItem(START_KEY, startInput.value || "");
+    try { localStorage.setItem(START_KEY, startInput.value || ""); } catch {}
     if (!items.length) {
       updateDebug();
       return;
@@ -149,7 +152,7 @@
       if (!start) {
         item.pending = false;
         clearOutput(item);
-        showError("请先填写起始日。");
+        showError("请先填写宝宝生日。");
         updateCard(item);
         updateShare();
         return;
@@ -166,8 +169,19 @@
         updateShare();
         return;
       }
-      var day = calendarDays(item.shoot, start) + 1;
-      if (item.outBlob && item.day === day && !item.error) {
+      var age;
+      try {
+        age = calculateMonthAge(start.iso, item.shoot.iso);
+      } catch (error) {
+        item.pending = false;
+        item.error = error.message === "photo_before_start" ? "拍摄日期早于宝宝生日。" : "日期无效。";
+        clearOutput(item);
+        updateCard(item);
+        updateShare();
+        updateDebug();
+        return;
+      }
+      if (item.outBlob && item.age?.displayText === age.displayText && item.age.dateText === age.dateText && !item.error) {
         item.pending = false;
         updateCard(item);
         updateShare();
@@ -177,7 +191,7 @@
       item.pending = true;
       item.error = "";
       updateCard(item);
-      return doStamp(item, day, myJob);
+      return doStamp(item, age, myJob);
     });
   }
 
@@ -228,7 +242,7 @@
         "</div>" +
         '<p class="card-error" hidden></p>' +
         '<p class="pending" hidden></p>' +
-        '<p class="day-line" hidden>DAY <span class="day-number"></span></p>' +
+        '<p class="day-line" hidden></p>' +
         '<img class="preview" alt="加上水印后的照片" hidden>' +
         '<p class="out-name" hidden></p>' +
         '<p class="save-hint" hidden>也可以长按图片，选择保存到相册。</p>' +
@@ -254,7 +268,6 @@
     var err = el.querySelector(".card-error");
     var pending = el.querySelector(".pending");
     var dayLine = el.querySelector(".day-line");
-    var dayNum = el.querySelector(".day-number");
     var preview = el.querySelector(".preview");
     var outName = el.querySelector(".out-name");
     var hint = el.querySelector(".save-hint");
@@ -271,9 +284,9 @@
     }
     err.hidden = !item.error;
     err.textContent = item.error || "";
-    var showResult = !!(item.outUrl && item.day != null && !item.error);
+    var showResult = !!(item.outUrl && item.age != null && !item.error);
     dayLine.hidden = !showResult;
-    if (showResult) dayNum.textContent = String(item.day);
+    if (showResult) dayLine.textContent = item.age.displayText;
     pending.hidden = !item.pending;
     pending.textContent = item.exifReady ? "处理中…" : "读取中…";
     if (showResult) {
@@ -311,11 +324,11 @@
   }
 
   function isReady(item) {
-    return !!(item.outBlob && item.outName && item.day != null && !item.error);
+    return !!(item.outBlob && item.outName && item.age != null && !item.error);
   }
 
   function clearOutput(item) {
-    item.day = null;
+    item.age = null;
     item.outBlob = null;
     item.outName = "";
     if (item.outUrl) {
@@ -341,7 +354,7 @@
   function updateDebug() {
     var lines = [];
     lines.push("浏览器：" + navigator.userAgent);
-    lines.push("起始日：" + (startInput.value || "（未填）"));
+    lines.push("宝宝生日：" + (startInput.value || "（未填）"));
     lines.push("照片数：" + items.length);
     if (!items.length) {
       lines.push(errorEl.hidden ? "还没有选择照片。" : errorEl.textContent);
@@ -359,7 +372,7 @@
       lines.push("EXIF 方位：" + (exif.orientation != null ? String(exif.orientation) : "（无）"));
       lines.push("拍摄日期来源：" + (item.dateSource || "（无）"));
       lines.push("拍摄日期：" + (item.shoot ? item.shoot.iso : "（无）"));
-      lines.push("DAY：" + (item.day != null ? String(item.day) : "（未计算）"));
+      lines.push("月龄：" + (item.age != null ? item.age.displayText : "（未计算）"));
       if (item.outName) lines.push("保存文件名：" + item.outName);
       if (item.decodeNote) lines.push("解码：" + item.decodeNote);
       if (item.error) lines.push("错误：" + item.error);
@@ -393,7 +406,10 @@
     var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
     if (!m) return null;
     var y = +m[1], mo = +m[2], d = +m[3];
-    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    if (y < 1 || mo < 1 || mo > 12 || d < 1) return null;
+    var leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+    var monthLengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (d > monthLengths[mo - 1]) return null;
     return { y: y, mo: mo, d: d, iso: m[0] };
   }
 
@@ -402,11 +418,6 @@
     var m = String(str).trim().match(/^(\d{4})[:\-](\d{2})[:\-](\d{2})/);
     if (!m) return null;
     return parseIsoDate(m[1] + "-" + m[2] + "-" + m[3]);
-  }
-
-  function calendarDays(a, b) {
-    var ms = Date.UTC(a.y, a.mo - 1, a.d) - Date.UTC(b.y, b.mo - 1, b.d);
-    return Math.round(ms / 86400000);
   }
 
   function dateFromExif(exif) {
@@ -540,8 +551,13 @@
 
   /* ---- image + watermark, one photo at a time ---- */
 
-  function doStamp(item, day, myJob) {
-    return loadOrientedImage(item).then(function (img) {
+  function doStamp(item, age, myJob) {
+    return renderTemplate03(age).then(function (png) {
+      if (myJob !== job || item.sel !== selection) return null;
+      return loadStampImage(png);
+    }).then(async function (stamp) {
+      if (!stamp || myJob !== job || item.sel !== selection) return null;
+      var img = await loadOrientedImage(item);
       if (myJob !== job || item.sel !== selection) {
         closeImg(img);
         releaseCanvas();
@@ -560,20 +576,9 @@
       ctx.drawImage(img, 0, 0, w, h);
       closeImg(img);
 
-      var text = "DAY " + day;
-      var fontSize = Math.max(28, Math.round(w * 0.055));
-      var padPx = Math.round(fontSize * 0.7);
-      ctx.save();
-      ctx.font = "bold " + fontSize + "px system-ui, -apple-system, sans-serif";
-      ctx.textAlign = "right";
-      ctx.textBaseline = "bottom";
-      ctx.shadowColor = "rgba(0,0,0,0.65)";
-      ctx.shadowBlur = Math.round(fontSize * 0.35);
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = Math.round(fontSize * 0.06);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(text, w - padPx, h - padPx);
-      ctx.restore();
+      var stampWidth = w * 0.28;
+      var stampHeight = stampWidth * stamp.naturalHeight / stamp.naturalWidth;
+      ctx.drawImage(stamp, w * 0.05, h * 0.97 - stampHeight, stampWidth, stampHeight);
 
       return new Promise(function (resolve, reject) {
         canvas.toBlob(function (blob) {
@@ -585,7 +590,7 @@
     }).then(function (blob) {
       if (!blob) return;
       if (myJob !== job || item.sel !== selection) return;
-      item.day = day;
+      item.age = age;
       item.outBlob = blob;
       item.outName = uniqueName(item);
       item.outUrl = URL.createObjectURL(blob);
@@ -606,16 +611,32 @@
     });
   }
 
+  function loadStampImage(png) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(new Blob([png], { type: "image/png" }));
+      var image = new Image();
+      image.onload = function () {
+        URL.revokeObjectURL(url);
+        resolve(image);
+      };
+      image.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error("无法读取月龄印章"));
+      };
+      image.src = url;
+    });
+  }
+
   function uniqueName(item) {
     var base = stripExt(item.file.name || "photo");
     var used = {};
     items.forEach(function (other) {
       if (other !== item && other.outName) used[other.outName] = true;
     });
-    var name = "DAY-" + item.day + "-" + base + ".jpg";
+    var name = item.age.displayText + "-" + base + ".jpg";
     var n = 2;
     while (used[name]) {
-      name = "DAY-" + item.day + "-" + base + "-" + n + ".jpg";
+      name = item.age.displayText + "-" + base + "-" + n + ".jpg";
       n += 1;
     }
     return name;
@@ -688,7 +709,7 @@
       canShare = false;
     }
     if (canShare && navigator.share) {
-      navigator.share({ files: [outFile], title: "DAY " + item.day }).catch(function (err) {
+      navigator.share({ files: [outFile], title: item.age.displayText }).catch(function (err) {
         if (err && err.name === "AbortError") return;
         downloadFile(outFile);
       });
@@ -733,3 +754,4 @@
 
   updateDebug();
 })();
+
