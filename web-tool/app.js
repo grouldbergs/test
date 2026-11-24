@@ -4,7 +4,11 @@
 
   var MAX = 20;
   var STAMP_WIDTH_RATIO = 0.20;
-  var TEMPLATE_ID = "03";
+  var templates = new Map([
+    ["01", { title: "天数印章", description: "给每张照片，加上拍摄当天的日期和天数" }],
+    ["03", { title: "月龄印章", description: "给每张照片，加上拍摄当天的日期和月龄" }],
+  ]);
+  var templateId = "";
   var code = "";
   var TAG_ORIENTATION = 0x0112;
   var TAG_DATETIME = 0x0132;
@@ -47,13 +51,17 @@
     if (!candidate || button.disabled) return;
     button.disabled = true;
     input.readOnly = true;
-    accessError.textContent = "正在验证兑换码…";
+    accessError.textContent = "正在验证邀请码…";
     try {
-      var result = await request("/api/redemption/lookup", { code: candidate });
-      if (result.state !== "activated") throw new Error("请先到激活页选择模板并完成激活。");
-      if (!result.templates.some(function (template) { return template.template_id === TEMPLATE_ID; })) {
-        throw new Error("网页版试用支持月龄印章。你可以在激活页找回已激活模板的快捷指令。");
-      }
+      var result = await request("/api/web-tool/access", { code: candidate });
+      var template = templates.get(result.template_id);
+      var start = parseIsoDate(result.start_date);
+      if (!template || !start) throw new Error("暂时无法打开印章，请稍后重试。");
+      templateId = result.template_id;
+      document.getElementById("tool-title").textContent = template.title;
+      document.getElementById("tool-description").textContent = template.description;
+      document.getElementById("day-one").textContent =
+        "Day 1 日期：" + start.y + "年" + start.mo + "月" + start.d + "日";
       code = candidate;
       input.value = "";
       gate.hidden = true;
@@ -256,7 +264,7 @@
           '<input class="manual-date" id="' + manualId + '" type="date">' +
         "</div>" +
         '<p class="card-error" hidden></p>' +
-        '<button class="save-one" type="button" hidden>分享这张</button>';
+        '<button class="save-one" type="button" hidden>保存这张</button>';
       art.querySelector(".manual-date").addEventListener("change", function () {
         onManualChange(item);
       });
@@ -315,9 +323,6 @@
   function updateSummary(readyCount) {
     summary.hidden = items.length === 0;
     if (summary.hidden) return;
-    var automatic = items.filter(function (item) {
-      return item.dateSource && item.dateSource !== "manual" && !item.error;
-    }).length;
     var missing = items.filter(function (item) {
       return item.dateSource === "manual" && !parseIsoDate(item.el.querySelector(".manual-date").value);
     }).length;
@@ -326,12 +331,18 @@
     var processing = items.some(function (item) { return item.pending; });
     retry.hidden = !failed;
     retry.disabled = processing;
-    summary.textContent = "已选 " + items.length + " 张。" + (reading ? "正在读取拍摄日期…" :
-      automatic + " 张已自动识别日期，可直接添加水印。" +
-      (missing ? " " + missing + " 张需要补拍摄日期。" : "") +
-      (readyCount ? " 已生成 " + readyCount + " 张。" : "") +
-      (failed ? " " + failed + " 张处理失败。" : "") +
-      (processing ? " 正在生成…" : ""));
+    if (reading) {
+      summary.textContent = "已选 " + items.length + " 张，正在读取拍摄日期…";
+      return;
+    }
+    var updates = [];
+    if (processing) updates.push("正在给照片加印章，已完成 " + readyCount + " / " + items.length);
+    else if (failed) updates.push("已完成 " + readyCount + " 张，" + failed + " 张处理失败");
+    else if (readyCount === items.length) updates.push(readyCount + " 张已成功");
+    else if (readyCount) updates.push("已完成 " + readyCount + " 张");
+    if (missing) updates.push(missing + " 张待补充拍摄日期，请填写确认哦");
+    summary.textContent = updates.join("。") || "已选 " + items.length + " 张";
+
   }
 
   function updateShare() {
@@ -350,16 +361,16 @@
     items.forEach(updateCard);
     var show = items.length >= 2 && ready.length >= 1;
     shareAllBtn.hidden = !show;
-    shareNote.hidden = !show;
+    shareNote.hidden = !ready.length;
     if (!show) {
       shareIncomplete.hidden = true;
       return;
     }
     if (ready.length === items.length) {
-      shareAllBtn.textContent = "分享 " + ready.length + " 张成片";
+      shareAllBtn.textContent = "存到相册";
       shareIncomplete.hidden = true;
     } else {
-      shareAllBtn.textContent = "分享已完成的 " + ready.length + " 张";
+      shareAllBtn.textContent = "保存已完成的 " + ready.length + " 张";
       shareIncomplete.hidden = false;
     }
   }
@@ -613,15 +624,15 @@
       if (!response.ok) {
         var error = await response.json().catch(function () { return {}; });
         var messages = {
-          invalid_code: "兑换码无效，请核对后重试。",
-          invalid_request: "请核对兑换码格式。",
-          inactive_code: "兑换码不可用。如已购买，请联系店铺客服。",
-          redemption_unavailable: "此兑换码暂不可用，请联系店铺客服。",
-          template_not_entitled: "此兑换码没有月龄印章权益。",
-          template_not_found: "网页版月龄印章暂不可用。",
-          template_unavailable: "月龄印章暂不可用，请联系店铺客服。",
-          entitlement_inactive: "请先完成月龄印章激活。",
-          photo_before_start: "拍摄日期早于激活时设置的开始日期。",
+          invalid_code: "没找到这个邀请码，请核对后再试",
+          invalid_request: "没找到这个邀请码，请核对后再试",
+          inactive_code: "邀请码暂时不可用",
+          redemption_unavailable: "邀请码暂时不可用",
+          template_not_entitled: "这个邀请码对应的印章暂不可用。",
+          template_not_found: "这个邀请码对应的印章暂不可用。",
+          template_unavailable: "这个邀请码对应的印章暂不可用。",
+          entitlement_inactive: "邀请码还没激活，请先到激活页绑定 Day 1 日期",
+          photo_before_start: "这张照片拍摄于 Day 1 日期之前，无法生成水印。若拍摄日期识别有误，请核对照片日期。",
           invalid_photo_date: "拍摄日期无效，请检查照片日期。"
         };
         var message = Object.hasOwn(messages, error.code) ? messages[error.code] : "服务暂时不可用，请稍后重试。";
@@ -638,9 +649,9 @@
     var promise = request("/api/stamp", {
       code: code,
       photo_date: photoDate,
-      template_id: TEMPLATE_ID
+      template_id: templateId
     }).then(function (png) {
-      if (png.type !== "image/png") throw new Error("暂时无法获取月龄印章。");
+      if (png.type !== "image/png") throw new Error("暂时无法获取印章。");
       return loadStampImage(png);
     }).catch(function (error) {
       if (stamps.get(photoDate) === promise) stamps.delete(photoDate);
@@ -661,7 +672,7 @@
       };
       image.onerror = function () {
         URL.revokeObjectURL(url);
-        reject(new Error("无法读取月龄印章"));
+        reject(new Error("无法读取印章"));
       };
       image.src = url;
     });
@@ -746,7 +757,7 @@
       canShare = false;
     }
     if (canShare && navigator.share) {
-      navigator.share({ files: [outFile], title: "TinyDays 月龄印章" }).then(reportShare).catch(function (err) {
+      navigator.share({ files: [outFile], title: "TinyDays 照片时光印章" }).then(reportShare).catch(function (err) {
         if (err && err.name === "AbortError") return;
         downloadFile(outFile);
       });
