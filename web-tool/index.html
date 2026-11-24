@@ -1,60 +1,81 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>TinyDays 月龄印章</title>
+  <meta name="theme-color" content="#f6f2e9">
+  <title>月龄印章 · TinyDays</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <header class="masthead">
+    <div class="masthead-inner"><span class="brand">TinyDays</span><a href="#help">使用帮助</a></div>
+  </header>
   <main>
-    <header>
-      <p class="brand">TinyDays</p>
-      <h1>月龄印章</h1>
-      <p class="lead">给宝宝的照片加上拍摄那天的月龄。照片全程留在你的设备上。</p>
-    </header>
-    <form id="access-form" class="panel">
-      <label for="code">已激活的兑换码</label>
-      <input id="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="80" required>
-      <p id="access-error" role="status"></p>
-      <button id="access-submit" type="submit">进入工具</button>
-      <a class="activate" href="/activate">激活或找回快捷指令</a>
-    </form>
-    <section id="tool" hidden>
-      <div class="pick">
-        <label for="photo" id="photo-label">选择照片</label>
-        <input type="file" id="photo" accept="image/*,.heic,.heif" multiple>
-        <p class="note">选图后自动盖章。缺日期的照片会提示补填。</p>
+    <form id="access-form" class="paper">
+      <div class="hero">
+        <div>
+          <h1>月龄印章</h1>
+          <p>给宝宝的照片盖上拍摄当天的月龄和日期。</p>
+        </div>
+        <figure class="sample">
+          <img src="/unified/images/template-03-preview.png" alt="月龄印章示例，含月龄与拍摄日期" width="373" height="333">
+        </figure>
       </div>
-  <p id="error" role="alert" hidden></p>
-  <p id="batch-summary" role="status" hidden></p>
-  <section id="example" hidden>
-    <h2>水印效果示例</h2>
-    <img id="example-image" class="preview" alt="加上月龄水印的示例照片">
-    <button id="example-save" type="button">分享或下载这张</button>
-  </section>
-  <button id="retry" type="button" hidden>重试失败照片</button>
-  <div id="cards"></div>
+      <div class="access-fields">
+        <label for="code">兑换码</label>
+        <input id="code" type="text" placeholder="粘贴购买时收到的兑换码" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="80" aria-describedby="access-error" required>
+        <p id="access-error" role="status"></p>
+        <button id="access-submit" class="primary" type="submit">开始盖章</button>
+        <p class="activate">首次使用？<a href="/activate">先激活兑换码</a></p>
+      </div>
+    </form>
 
-  <p id="share-note" class="note" hidden>只会打开系统分享，不会自动写入相册。</p>
-  <p id="share-incomplete" class="note" hidden>还有照片没完成，这次分享不包括它们。</p>
-  <button id="share-all" type="button" hidden>分享全部</button>
-  <p id="share-fallback" class="note" hidden>这个浏览器不能一次分享多张。请在下方逐张保存。</p>
+    <section id="tool" aria-labelledby="tool-title" hidden>
+      <h1 id="tool-title" tabindex="-1">月龄印章</h1>
+      <p class="intro">选好照片，TinyDays 会按拍摄日期自动盖章。</p>
 
-  <p id="save-status" role="status"></p>
+      <div class="pick">
+        <input type="file" id="photo" class="visually-hidden" accept="image/*,.heic,.heif" aria-describedby="pick-hint" multiple>
+        <label for="photo" id="photo-label">＋ 选择照片</label>
+        <p id="pick-hint">每次最多选 20 张，缺少拍摄日期时可以补填。</p>
+      </div>
+      <p id="error" role="alert" hidden></p>
+      <p id="batch-summary" class="batch-summary" role="status" hidden></p>
+
+      <section id="example" class="paper result" hidden>
+        <h2>成片预览</h2>
+        <img id="example-image" class="preview" alt="已加月龄印章的照片">
+        <div class="save-actions">
+          <button id="share-all" class="primary" type="button" hidden>分享成片</button>
+          <button id="example-save" type="button">分享这张</button>
+        </div>
+        <p id="share-note" class="note" hidden>在 iPhone 的分享菜单里选「存储图像」。</p>
+        <p id="share-incomplete" class="note" hidden>当前只分享已生成的照片。</p>
+        <p id="share-fallback" class="note" hidden>这次无法批量分享，可以在照片列表里逐张分享。</p>
+        <p id="save-status" role="status"></p>
+      </section>
+      <div id="cards" class="photo-list" aria-label="照片列表"></div>
+      <button id="retry" type="button" hidden>重试失败的照片</button>
     </section>
-    <details>
-      <summary>使用与保存说明</summary>
-      <p>优先读取照片里的拍摄日期。截图或转存图缺少拍摄日期时，请按原图补填。</p>
-      <p>成片为静态 JPEG。打开系统分享后，选择「存储图像」并到相册确认。浏览器无法批量分享时，可以逐张分享或下载。</p>
-      <p>若浏览器无法打开 HEIC，可先选取 JPEG 照片，或回到激活页使用月龄印章快捷指令。</p>
+
+    <details id="help">
+      <summary>使用帮助</summary>
+      <dl>
+        <dt>怎么保存到相册？</dt>
+        <dd>点「分享」后，在 iPhone 的系统菜单选「存储图像」。如果浏览器改为下载，可以在「文件」或浏览器的下载项目查看成片。</dd>
+        <dt>为什么需要补日期？</dt>
+        <dd>截图或转存图可能缺少拍摄日期。对照原图补上日期，这张照片就会继续盖章。</dd>
+        <dt>支持实况照片吗？</dt>
+        <dd>盖章后导出为静态 JPEG。若某张 HEIC 无法打开，可以换一张 JPEG 或用月龄印章快捷指令。</dd>
+      </dl>
     </details>
+    <p class="privacy-note">原图和成片都留在你的设备上。</p>
   </main>
   <footer>
-    <a href="/web-tool/privacy.html">服务与隐私说明</a>
+    <a href="/web-tool/privacy.html">服务与隐私</a>
     <a href="https://beian.miit.gov.cn/" rel="noopener noreferrer">京ICP备2026075329号</a>
   </footer>
-
   <canvas id="work"></canvas>
   <script type="module" src="app.js"></script>
 </body>
