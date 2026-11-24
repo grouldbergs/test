@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f6f2e9">
-  <title>月龄印章 · TinyDays</title>
+  <title>照片时光印章 · TinyDays</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,30 +15,28 @@
     <form id="access-form" class="paper">
       <div class="hero">
         <div>
-          <h1>月龄印章</h1>
-          <p>给宝宝的照片盖上拍摄当天的月龄和日期。</p>
+          <h1>照片时光印章</h1>
+          <p>给每张照片，加上那一天的时光印章。</p>
         </div>
-        <figure class="sample">
-          <img src="/unified/images/template-03-preview.png" alt="月龄印章示例，含月龄与拍摄日期" width="373" height="333">
-        </figure>
+        <div class="kv-detail" aria-hidden="true"></div>
       </div>
       <div class="access-fields">
-        <label for="code">兑换码</label>
-        <input id="code" type="text" placeholder="粘贴购买时收到的兑换码" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="80" aria-describedby="access-error" required>
+        <label for="code">邀请码</label>
+        <input id="code" type="text" placeholder="输入邀请码" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" aria-describedby="access-error" required>
         <p id="access-error" role="status"></p>
-        <button id="access-submit" class="primary" type="submit">开始盖章</button>
-        <p class="activate">首次使用？<a href="/activate">先激活兑换码</a></p>
+        <button id="access-submit" class="primary" type="submit">去给照片盖章</button>
       </div>
     </form>
 
     <section id="tool" aria-labelledby="tool-title" hidden>
-      <h1 id="tool-title" tabindex="-1">月龄印章</h1>
-      <p class="intro">选好照片，TinyDays 会按拍摄日期自动盖章。</p>
+      <h1 id="tool-title" tabindex="-1"></h1>
+      <p id="tool-description" class="intro"></p>
+      <p id="day-one" class="day-one"></p>
 
       <div class="pick">
         <input type="file" id="photo" class="visually-hidden" accept="image/*,.heic,.heif" aria-describedby="pick-hint" multiple>
-        <label for="photo" id="photo-label">＋ 选择照片</label>
-        <p id="pick-hint">每次最多选 20 张，缺少拍摄日期时可以补填。</p>
+        <label for="photo" id="photo-label">选择照片</label>
+        <p id="pick-hint">每次最多 20 张</p>
       </div>
       <p id="error" role="alert" hidden></p>
       <p id="batch-summary" class="batch-summary" role="status" hidden></p>
@@ -47,10 +45,10 @@
         <h2>成片预览</h2>
         <img id="example-image" class="preview" alt="已加月龄印章的照片">
         <div class="save-actions">
-          <button id="share-all" class="primary" type="button" hidden>分享成片</button>
-          <button id="example-save" type="button">分享这张</button>
+          <button id="share-all" class="primary" type="button" hidden>存到相册</button>
+          <button id="example-save" type="button">存到相册</button>
         </div>
-        <p id="share-note" class="note" hidden>在 iPhone 的分享菜单里选「存储图像」。</p>
+        <p id="share-note" class="note" hidden>选「保存图像」，就能在相册里找到盖好章的照片。</p>
         <p id="share-incomplete" class="note" hidden>当前只分享已生成的照片。</p>
         <p id="share-fallback" class="note" hidden>这次无法批量分享，可以在照片列表里逐张分享。</p>
         <p id="save-status" role="status"></p>
@@ -70,7 +68,7 @@
         <dd>盖章后导出为静态 JPEG。若某张 HEIC 无法打开，可以换一张 JPEG 或用月龄印章快捷指令。</dd>
       </dl>
     </details>
-    <p class="privacy-note">原图和成片都留在你的设备上。</p>
+    <p class="privacy-note">照片就在你的手机里完成盖章。</p>
   </main>
   <footer>
     <a href="/web-tool/privacy.html">服务与隐私</a>
