@@ -18,7 +18,6 @@
   var saveStatus = document.getElementById("save-status");
   var photoInput = document.getElementById("photo");
   var photoLabel = document.getElementById("photo-label");
-  photoLabel.textContent = "选择照片（最多 " + MAX + " 张）";
   var errorEl = document.getElementById("error");
   var summary = document.getElementById("batch-summary");
   var example = document.getElementById("example");
@@ -59,7 +58,7 @@
       input.value = "";
       gate.hidden = true;
       document.getElementById("tool").hidden = false;
-      photoInput.focus();
+      document.getElementById("tool-title").focus();
     } catch (error) {
       accessError.textContent = messageOf(error);
     } finally {
@@ -90,6 +89,7 @@
     var files = photoInput.files ? Array.prototype.slice.call(photoInput.files) : [];
     if (!code || !files.length) return;
     photoInput.value = "";
+    photoLabel.textContent = "＋ 重新选图";
     saveStatus.textContent = "";
     job += 1;
     var myJob = job;
@@ -247,15 +247,16 @@
       var manualId = "manual-" + item.sel + "-" + index;
       art.innerHTML =
         '<p class="file-name"></p>' +
+        '<p class="photo-status"></p>' +
         '<div class="manual" hidden>' +
           '<img class="original" alt="待补日期的原照片" loading="lazy" decoding="async" hidden>' +
           '<p class="original-error" hidden>浏览器无法预览这张原照片，请按文件名确认。</p>' +
-          '<p>没有读到拍摄日期，请手动选择。</p>' +
+          '<p>请对照原图补上这张的拍摄日期。</p>' +
           '<label for="' + manualId + '">拍摄日期</label>' +
           '<input class="manual-date" id="' + manualId + '" type="date">' +
         "</div>" +
         '<p class="card-error" hidden></p>' +
-        '<button class="save-one" type="button" hidden>保存这张</button>';
+        '<button class="save-one" type="button" hidden>分享这张</button>';
       art.querySelector(".manual-date").addEventListener("change", function () {
         onManualChange(item);
       });
@@ -293,7 +294,14 @@
     err.textContent = item.error || "";
     var showFallback = isReady(item) && (!shareFallback.hidden || item !== exampleItem);
     saveBtn.hidden = !showFallback;
-    el.hidden = !showManual && !item.error && !showFallback;
+    var status = el.querySelector(".photo-status");
+    var shoot = item.shoot;
+    status.textContent = item.error ? "盖章失败"
+      : !item.exifReady ? "正在读日期"
+      : isReady(item) ? "已盖章 · " + shoot.iso
+      : showManual && !shoot ? "待补日期"
+      : "正在盖章";
+    el.hidden = false;
   }
 
   function clearExample() {
@@ -348,7 +356,7 @@
       return;
     }
     if (ready.length === items.length) {
-      shareAllBtn.textContent = "分享全部（" + ready.length + " 张）";
+      shareAllBtn.textContent = "分享 " + ready.length + " 张成片";
       shareIncomplete.hidden = true;
     } else {
       shareAllBtn.textContent = "分享已完成的 " + ready.length + " 张";
@@ -777,11 +785,11 @@
   }
 
   function reportShare() {
-    saveStatus.textContent = "已交给系统分享，请打开相册确认照片已保存。";
+    saveStatus.textContent = "请到相册确认成片是否已保存。";
   }
 
   function downloadFile(file) {
-    saveStatus.textContent = "已请求下载，请在浏览器的下载项目中查看。";
+    saveStatus.textContent = "已开始下载。可到浏览器的下载项目查看成片。";
     var url = URL.createObjectURL(file);
     var a = document.createElement("a");
     a.href = url;
