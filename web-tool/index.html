@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TinyDays 月龄印章</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="brand">TinyDays</p>
+      <h1>月龄印章</h1>
+      <p class="lead">给宝宝的照片加上拍摄那天的月龄。照片全程留在你的设备上。</p>
+    </header>
+    <form id="access-form" class="panel">
+      <label for="code">已激活的兑换码</label>
+      <input id="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="80" required>
+      <p id="access-error" role="status"></p>
+      <button id="access-submit" type="submit">进入工具</button>
+      <a class="activate" href="/activate">激活或找回快捷指令</a>
+    </form>
+    <section id="tool" hidden>
+      <div class="pick">
+        <label for="photo" id="photo-label">选择照片</label>
+        <input type="file" id="photo" accept="image/*,.heic,.heif" multiple>
+        <p class="note">选图后自动盖章。缺日期的照片会提示补填。</p>
+      </div>
+  <p id="error" role="alert" hidden></p>
+  <p id="batch-summary" role="status" hidden></p>
+  <section id="example" hidden>
+    <h2>水印效果示例</h2>
+    <img id="example-image" class="preview" alt="加上月龄水印的示例照片">
+    <button id="example-save" type="button">分享或下载这张</button>
+  </section>
+  <button id="retry" type="button" hidden>重试失败照片</button>
+  <div id="cards"></div>
+
+  <p id="share-note" class="note" hidden>只会打开系统分享，不会自动写入相册。</p>
+  <p id="share-incomplete" class="note" hidden>还有照片没完成，这次分享不包括它们。</p>
+  <button id="share-all" type="button" hidden>分享全部</button>
+  <p id="share-fallback" class="note" hidden>这个浏览器不能一次分享多张。请在下方逐张保存。</p>
+
+  <p id="save-status" role="status"></p>
+    </section>
+    <details>
+      <summary>使用与保存说明</summary>
+      <p>优先读取照片里的拍摄日期。截图或转存图缺少拍摄日期时，请按原图补填。</p>
+      <p>成片为静态 JPEG。打开系统分享后，选择「存储图像」并到相册确认。浏览器无法批量分享时，可以逐张分享或下载。</p>
+      <p>若浏览器无法打开 HEIC，可先选取 JPEG 照片，或回到激活页使用月龄印章快捷指令。</p>
+    </details>
+  </main>
+  <footer>
+    <a href="/web-tool/privacy.html">服务与隐私说明</a>
+    <a href="https://beian.miit.gov.cn/" rel="noopener noreferrer">京ICP备2026075329号</a>
+  </footer>
+
+  <canvas id="work"></canvas>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
